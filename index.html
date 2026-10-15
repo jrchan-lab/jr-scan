@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- RELATED: apps/scanner/Code.gs (saves the PDFs to Drive), apps/scanner/README.md. v7 (15-Oct evening): ONE page, TWO homes: inside Apps Script it talks via google.script.run (camera = the phone's own camera app, because the Apps Script iframe may not use getUserMedia); on its own HTTPS address (GitHub Pages) it talks to Code.gs doPost via fetch (EXEC_URL) and gets a LIVE camera with a guide frame, a level and live checks. v4 (15-Oct): phone saves the ORIGINAL photos only; the Dell cleaner (cleaner/scan_clean.py) cuts, straightens, removes shadows and makes the 2-up. v3: fast repeat shots with the real camera, auto edge cut (OpenCV.js on demand), auto-turn, book-spread split, shadow-free clean-up, manual corner fix. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root { --bg:#14181d; --card:#1f252d; --ink:#f3f1ea; --soft:#a9b0b8; --accent:#e9b949; --ok:#5fbf77; --bad:#e46a5f; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,"PingFang SC","Microsoft YaHei",sans-serif; font-size:18px; }
+  main { max-width:640px; margin:0 auto; padding:16px; }
+  h1 { font-size:24px; margin:4px 0 12px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  button, .btn { border:0; border-radius:12px; padding:16px 18px; font-size:20px; font-weight:600; cursor:pointer; color:#14181d; background:var(--accent); flex:1 1 45%; text-align:center; }
+  button.ghost, .btn.ghost { background:var(--card); color:var(--ink); border:1px solid #39424d; }
+  button:disabled { opacity:.45; }
+  input[type=text], input[type=password] { width:100%; font-size:20px; padding:12px; border-radius:10px; border:1px solid #39424d; background:var(--card); color:var(--ink); }
+  label.check { display:flex; align-items:center; gap:10px; margin:10px 0; color:var(--soft); }
+  label.check input { width:24px; height:24px; }
+  .pages { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin:14px 0; }
+  .page { background:var(--card); border-radius:12px; padding:8px; }
+  .page img { width:100%; height:180px; object-fit:contain; background:#fff; border-radius:6px; }
+  .page .n { font-weight:700; margin:4px 0; }
+  .page .tools { display:flex; gap:6px; }
+  .page .tools button { padding:8px 0; font-size:17px; flex:1; background:#2c343e; color:var(--ink); }
+  .msg { margin:12px 0; padding:12px; border-radius:10px; background:var(--card); color:var(--soft); white-space:pre-line; }
+  .msg.ok { color:var(--ok); } .msg.bad { color:var(--bad); }
+  .links a { display:block; color:var(--accent); margin:8px 0; font-size:18px; word-break:break-all; }
+  .hint { color:var(--soft); font-size:15px; }
+  .hidden { display:none !important; }
+  /* full-screen layers */
+  .layer { position:fixed; inset:0; background:#000; z-index:10; display:flex; flex-direction:column; }
+  .layer video, .layer canvas { flex:1; width:100%; min-height:0; object-fit:contain; touch-action:none; }
+  .bar { display:flex; gap:10px; padding:12px; background:#0b0e11; align-items:center; }
+  .bar button { flex:1; }
+  .count { color:#fff; font-size:18px; min-width:90px; text-align:center; }
+  .btn.small { font-size:16px; padding:10px; flex:1 1 100%; }
+  .btn.big { font-size:24px; padding:22px 18px; flex:1 1 100%; }
+  /* live camera layer */
+  .cam { position:fixed; inset:0; background:#000; z-index:20; overflow:hidden; user-select:none; -webkit-user-select:none; }
+  .cam video, .cam canvas { position:absolute; left:0; top:0; width:100%; height:100%; }
+  .cam video { object-fit:contain; background:#000; }
+  .cam canvas { pointer-events:none; }
+  #camTop { position:absolute; left:0; right:0; top:0; display:flex; gap:8px; padding:12px; padding-top:max(12px, env(safe-area-inset-top)); }
+  #camTop button { padding:12px 6px; font-size:18px; background:rgba(20,24,29,.78); color:var(--ink); border:1px solid #39424d; }
+  #camTop button.on { background:var(--accent); color:#14181d; border-color:var(--accent); }
+  #camIssue { position:absolute; left:0; right:0; top:84px; text-align:center; font-size:34px; font-weight:800; color:var(--bad); text-shadow:0 2px 8px #000, 0 0 3px #000; pointer-events:none; padding:0 70px 0 12px; }
+  #camIssue.good { color:var(--ok); }
+  #camBottom { position:absolute; left:0; right:0; bottom:0; display:flex; align-items:center; gap:10px; padding:14px; padding-bottom:max(14px, env(safe-area-inset-bottom)); background:linear-gradient(transparent, rgba(0,0,0,.65)); }
+  #camBottom .side { flex:1; display:flex; }
+  #camBottom .side.r { justify-content:flex-end; }
+  #camDone { flex:0 0 auto; padding:14px 22px; background:rgba(20,24,29,.85); color:var(--ink); border:1px solid #39424d; }
+  #camShot { flex:0 0 auto; width:84px; height:84px; padding:0; border-radius:50%; border:6px solid #fff; background:var(--accent); }
+  #camCount { color:#fff; font-size:20px; font-weight:700; text-shadow:0 1px 4px #000; }
+  #camToast { position:absolute; left:12px; right:12px; bottom:128px; text-align:center; color:#fff; font-size:20px; background:rgba(228,106,95,.92); border-radius:10px; padding:10px; pointer-events:none; }
+  #camFlash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>📄 JR 扫描</h1>
+
+  <section id="pinBox" class="hidden">
+    <p>请输入家里的密码：</p>
+    <input id="pin" type="password" inputmode="numeric" autocomplete="off">
+    <div class="row" style="margin-top:10px"><button id="pinGo">进入</button></div>
+  </section>
+
+  <section id="app" class="hidden">
+    <div class="row">
+      <button id="liveBtn" class="big hidden">📷 开相机拍</button>
+      <label class="btn" id="camBtn">📷 拍一页<input id="cam" type="file" accept="image/*" capture="environment" class="hidden"></label>
+      <label class="btn ghost">🖼 从相册选（可以一次选很多张）<input id="gallery" type="file" accept="image/*" multiple class="hidden"></label>
+    </div>
+    <p class="hint">拍完一页，再按「📷 拍下一页」，一直拍下去，顺序会自动排好。手机的影子会自动淡掉。拍完可以按 ✂ 调边、↻ 转方向、⬆⬇ 换顺序、✕ 删掉。</p>
+
+    <p class="hint">手机只存清楚的原图。电脑会自动切边、拉正、去影子，再做好「两页一面」给你印（大约 5 分钟后，在 Drive 的「09_扫描 / 已整理」）。</p>
+    <span class="hidden"><input id="autocut" type="checkbox"><input id="split" type="checkbox"><input id="enhance" type="checkbox"></span>
+
+    <div id="pages" class="pages"></div>
+
+    <p>文件名字：<span class="hint">扫学生的卷，请在后面加学生名字（例如 …-陈小明）；扫书可以不改。</span></p>
+    <input id="name" type="text">
+    <div class="row" style="margin-top:12px">
+      <button id="make" disabled>✅ 做成 PDF，存起来</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="clear" class="ghost" disabled>🗑 全部清掉，重新开始</button>
+    </div>
+
+    <div id="msg" class="msg hidden"></div>
+    <div id="links" class="links"></div>
+
+    <p style="margin-top:24px">最近存的文件：</p>
+    <div id="recent" class="links hint">（还没有）</div>
+  </section>
+</main>
+
+<!-- corner editor layer -->
+<div id="edLayer" class="layer hidden">
+  <canvas id="edCanvas"></canvas>
+  <div class="bar">
+    <button id="edCancel" class="ghost">取消</button>
+    <button id="edFull" class="ghost">整张</button>
+    <button id="edSave">✂ 切好</button>
+  </div>
+</div>
+
+<!-- live camera layer -->
+<div id="camLayer" class="cam hidden">
+  <video id="camVideo" playsinline autoplay muted></video>
+  <canvas id="camOverlay"></canvas>
+  <div id="camTop">
+    <button id="modeOne" class="on">一页</button>
+    <button id="modeTwo">两页（书打开）</button>
+  </div>
+  <div id="camIssue"></div>
+  <div id="camToast" class="hidden"></div>
+  <div id="camFlash"></div>
+  <div id="camBottom">
+    <div class="side"><button id="camDone">完成</button></div>
+    <button id="camShot" aria-label="拍照"></button>
+    <div class="side r"><span id="camCount">已拍 0 页</span></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // Big C fills in JR's Apps Script web-app address (https://script.google.com/macros/s/.../exec) before the page is published on GitHub Pages.
+  // Inside Apps Script itself this stays unused (google.script.run is used instead).
+  var EXEC_URL = 'https://script.google.com/macros/s/AKfycbyxbS6gZNiC37tzVZgdoM4eJLfdWZAKOU5rGPMp-D9XRwd8DTkhQL4Braa3lYnddZ3e1A/exec';   // JR's JR 扫描 deployment, given 15-Oct evening
+  var onGoogle = typeof google !== 'undefined' && google.script && google.script.run;
+  var hasServer = !!(onGoogle || EXEC_URL);     // false = nothing to save to: the PDF is only downloaded
+  var pages = [];            // {orig: dataURL, w, h, quad: [[x,y]x4] in orig px or null, cut: dataURL|null, rot: 0..3}
+  var MAX_SIDE = 2600;
+  var pinValue = '';
+  var $ = function (id) { return document.getElementById(id); };
+
+  function show(id, on) { $(id).classList.toggle('hidden', !on); }
+  function say(text, kind) { var m = $('msg'); m.textContent = text; m.className = 'msg' + (kind ? ' ' + kind : ''); }
+  function stamp() {
+    var d = new Date(), p = function (x) { return ('0' + x).slice(-2); };
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());   // seconds: two saves in one minute get different names
+  }
+  function run(fn, args) {
+    if (onGoogle) return new Promise(function (ok, bad) {
+      var r = google.script.run.withSuccessHandler(ok).withFailureHandler(function (e) { bad(e && e.message ? e : new Error(String(e))); });
+      r[fn].apply(r, args);
+    });
+    if (!EXEC_URL) return Promise.reject(new Error('这个网页还没有连上 Google（服务器地址没填）。'));
+    // No custom headers => text/plain => no CORS preflight; Code.gs doPost() answers {ok,result} or {ok,error}.
+    return fetch(EXEC_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ fn: fn, args: args }) })
+      .then(function (r) { return r.text(); }, function () { throw new Error('连不上服务器，请检查网络。'); })
+      .then(function (t) {
+        var j; try { j = JSON.parse(t); } catch (e) { throw new Error('服务器的回复看不懂（可能没有设成「任何人都能用」）。'); }
+        if (j && j.ok) return j.result;
+        throw new Error((j && j.error) || '服务器出错了。');
+      });
+  }
+  function loadImage(src) {
+    return new Promise(function (ok, bad) { var im = new Image(); im.onload = function () { ok(im); }; im.onerror = bad; im.src = src; });
+  }
+
+  // ---------- start: PIN or straight in ----------
+  function start() {
+    $('name').value = '扫描-' + stamp();
+    applyCamUi();
+    if (!hasServer) { show('app', true); say('这个网页还没有连上 Google（服务器地址没填）。\n可以先拍照、做 PDF，但 PDF 只会下载到这台机器，不会存到 Drive。', 'bad'); return; }
+    try { pinValue = localStorage.getItem('jrScanPin') || ''; } catch (e) {}
+    run('pinNeeded', []).then(function (need) {
+      if (need && !pinValue) { show('pinBox', true); return; }
+      enterApp();
+    }).catch(function (e) { show('app', true); say('连不上：' + e.message, 'bad'); });
+  }
+  function enterApp() { show('pinBox', false); show('app', true); loadRecent(); }
+  $('pinGo').onclick = function () {
+    pinValue = $('pin').value.trim();
+    run('listRecent', [pinValue]).then(function (files) {
+      try { localStorage.setItem('jrScanPin', pinValue); } catch (e) {}
+      enterApp(); drawRecent(files);
+    }).catch(function (e) { alert(e.message); });
+  };
+  function loadRecent() {
+    if (!hasServer) return;
+    run('listRecent', [pinValue]).then(drawRecent).catch(function (e) {
+      if (/密码/.test(e.message)) { try { localStorage.removeItem('jrScanPin'); } catch (x) {} show('app', false); show('pinBox', true); }
+    });
+  }
+  function drawRecent(files) {
+    var box = $('recent');
+    if (!files || !files.length) { box.textContent = '（还没有）'; return; }
+    box.innerHTML = '';
+    files.forEach(function (f) { var a = document.createElement('a'); a.href = f.url; a.target = '_blank'; a.textContent = '📄 ' + f.name; box.appendChild(a); });
+  }
+
+  // ---------- OpenCV (only for finding the paper's corners), loaded once, on first need ----------
+  var cvPromise = null;
+  function getCv() {
+    if (cvPromise) return cvPromise;
+    cvPromise = new Promise(function (ok, bad) {
+      say('第一次用「自动切边」要下载工具（约 9 MB），请等一下……');
+      var s = document.createElement('script');
+      s.src = 'https://docs.opencv.org/4.8.0/opencv.js'; s.async = true;
+      // The OpenCV module object is "thenable"; resolving a Promise WITH it loops forever and freezes the page.
+      // So resolve with a plain wrapper {cv: module}, never with the module itself.
+      s.onload = function () {
+        var done = false, give = function (m) { if (done) return; done = true; window.cv = m; say('切边工具好了。'); ok({ cv: m }); };
+        var wait = function () {
+          var m = window.cv;
+          if (m && m.Mat) give(m);
+          else if (m && typeof m.then === 'function') m.then(function (r) { give(r && r.Mat ? r : window.cv); });
+          else if (m) m.onRuntimeInitialized = function () { give(window.cv); };
+          else setTimeout(wait, 100);
+        };
+        wait();
+      };
+      s.onerror = function () { bad(new Error('切边工具下载不到')); };
+      document.head.appendChild(s);
+      setTimeout(function () { bad(new Error('切边工具太久没下载好')); }, 60000);
+    }).catch(function (e) { cvPromise = null; throw e; });
+    return cvPromise;
+  }
+  // Largest sensible 4-corner shape = the paper. Text is closed away first; returns corners in canvas pixels, or null
+  // (null also when the paper already fills the photo: then nothing needs cutting).
+  function findPaper(cv, canvas) {
+    var src = cv.imread(canvas), sm = new cv.Mat(), g = new cv.Mat(), e = new cv.Mat(), cs = new cv.MatVector(), h = new cv.Mat();
+    var s = Math.min(1, 640 / Math.max(canvas.width, canvas.height)), best = null, bestA = 0;
+    try {
+      cv.resize(src, sm, new cv.Size(Math.round(canvas.width * s), Math.round(canvas.height * s)), 0, 0, cv.INTER_AREA);
+      cv.cvtColor(sm, g, cv.COLOR_RGBA2GRAY);
+      cv.GaussianBlur(g, g, new cv.Size(5, 5), 0);
+      var k = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(11, 11));
+      cv.morphologyEx(g, g, cv.MORPH_CLOSE, k); k.delete();
+      cv.Canny(g, e, 30, 90);
+      var k2 = cv.Mat.ones(5, 5, cv.CV_8U); cv.dilate(e, e, k2); k2.delete();
+      cv.findContours(e, cs, h, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      var A = g.rows * g.cols;
+      for (var i = 0; i < cs.size(); i++) {
+        var c = cs.get(i), a = cv.contourArea(c);
+        if (a > A * 0.25 && a < A * 0.9 && a > bestA) {
+          var hull = new cv.Mat(); cv.convexHull(c, hull, false, true);
+          var peri = cv.arcLength(hull, true), eps = [0.02, 0.03, 0.045, 0.06];
+          for (var j = 0; j < eps.length; j++) {
+            var ap = new cv.Mat(); cv.approxPolyDP(hull, ap, eps[j] * peri, true);
+            if (ap.rows === 4) {
+              bestA = a; best = [];
+              for (var q = 0; q < 4; q++) best.push([ap.data32S[q * 2] / s, ap.data32S[q * 2 + 1] / s]);
+              ap.delete(); break;
+            }
+            ap.delete();
+          }
+          hull.delete();
+        }
+        c.delete();
+      }
+    } finally { src.delete(); sm.delete(); g.delete(); e.delete(); cs.delete(); h.delete(); }
+    return best ? order(best) : null;
+  }
+  function order(q) {   // top-left, top-right, bottom-right, bottom-left
+    var s = q.slice().sort(function (a, b) { return (a[0] + a[1]) - (b[0] + b[1]); });
+    var tl = s[0], br = s[3], rest = [s[1], s[2]].sort(function (a, b) { return (a[1] - a[0]) - (b[1] - b[0]); });
+    return [tl, rest[0], br, rest[1]];
+  }
+
+  // ---------- perspective cut in plain JS (works even when OpenCV is not loaded) ----------
+  function solve(A, b) {   // 8x8 Gaussian elimination
+    var n = b.length, i, j, k;
+    for (i = 0; i < n; i++) A[i].push(b[i]);
+    for (i = 0; i < n; i++) {
+      var p = i; for (j = i + 1; j < n; j++) if (Math.abs(A[j][i]) > Math.abs(A[p][i])) p = j;
+      var t = A[i]; A[i] = A[p]; A[p] = t;
+      for (j = i + 1; j < n; j++) { var f = A[j][i] / A[i][i]; for (k = i; k <= n; k++) A[j][k] -= f * A[i][k]; }
+    }
+    var x = new Array(n);
+    for (i = n - 1; i >= 0; i--) { var sum = A[i][n]; for (j = i + 1; j < n; j++) sum -= A[i][j] * x[j]; x[i] = sum / A[i][i]; }
+    return x;
+  }
+  function homography(from, to) {   // maps `to` (output) points onto `from` (source) points
+    var A = [], b = [];
+    for (var i = 0; i < 4; i++) {
+      var X = to[i][0], Y = to[i][1], x = from[i][0], y = from[i][1];
+      A.push([X, Y, 1, 0, 0, 0, -X * x, -Y * x]); b.push(x);
+      A.push([0, 0, 0, X, Y, 1, -X * y, -Y * y]); b.push(y);
+    }
+    var h = solve(A, b); h.push(1); return h;
+  }
+  function dist(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); }
+  function cutPage(page) {
+    return loadImage(page.orig).then(function (im) { page.cut = warp(im, page.quad).toDataURL('image/jpeg', 0.9); });
+  }
+  function warp(im, q) {
+    {
+      var W = Math.round(Math.max(dist(q[0], q[1]), dist(q[3], q[2])));
+      var H = Math.round(Math.max(dist(q[0], q[3]), dist(q[1], q[2])));
+      var s = Math.min(1, MAX_SIDE / Math.max(W, H)); W = Math.round(W * s); H = Math.round(H * s);
+      var sc = document.createElement('canvas'); sc.width = im.naturalWidth || im.width; sc.height = im.naturalHeight || im.height;
+      var sg = sc.getContext('2d'); sg.drawImage(im, 0, 0);
+      var sd = sg.getImageData(0, 0, sc.width, sc.height).data, sw = sc.width, shh = sc.height;
+      var oc = document.createElement('canvas'); oc.width = W; oc.height = H;
+      var og = oc.getContext('2d'), out = og.createImageData(W, H), od = out.data;
+      var h = homography(q, [[0, 0], [W, 0], [W, H], [0, H]]);
+      for (var y = 0; y < H; y++) for (var x = 0; x < W; x++) {
+        var d = h[6] * x + h[7] * y + 1, u = (h[0] * x + h[1] * y + h[2]) / d, v = (h[3] * x + h[4] * y + h[5]) / d;
+        var ui = u | 0, vi = v | 0, o = (y * W + x) * 4;
+        if (ui < 0 || vi < 0 || ui >= sw || vi >= shh) { od[o] = od[o + 1] = od[o + 2] = 255; od[o + 3] = 255; continue; }
+        var si = (vi * sw + ui) * 4; od[o] = sd[si]; od[o + 1] = sd[si + 1]; od[o + 2] = sd[si + 2]; od[o + 3] = 255;
+      }
+      og.putImageData(out, 0, 0);
+      return oc;
+    }
+  }
+
+  // ---------- one photo -> one or two pages: cut, turn text level, split a book spread ----------
+  function greySmall(c, side) {
+    var s = Math.min(1, side / Math.max(c.width, c.height)), w = Math.max(1, Math.round(c.width * s)), h = Math.max(1, Math.round(c.height * s));
+    var t = document.createElement('canvas'); t.width = w; t.height = h; t.getContext('2d').drawImage(c, 0, 0, w, h);
+    var d = t.getContext('2d').getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+    for (var i = 0; i < w * h; i++) g[i] = (d[i * 4] * 299 + d[i * 4 + 1] * 587 + d[i * 4 + 2] * 114) / 1000;
+    return { g: g, w: w, h: h };
+  }
+  // Text lines make the row profile jump (line, gap, line…) when they run across, the column profile when they run down.
+  // Measured on JR's own photos 15-Oct: upright page rows 0.168 vs cols 0.099; sideways book cols 0.107 vs rows 0.085.
+  function linesRunDown(c) {
+    var m = greySmall(c, 500), g = m.g, w = m.w, h = m.h, mean = 0, i, x, y;
+    for (i = 0; i < g.length; i++) mean += g[i]; mean /= g.length;
+    var rows = new Float32Array(h), cols = new Float32Array(w);
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) if (g[y * w + x] < mean - 50) { rows[y]++; cols[x]++; }
+    var jump = function (a) { var s = 0, t = 0; for (var k = 1; k < a.length; k++) s += Math.abs(a[k] - a[k - 1]); for (k = 0; k < a.length; k++) t += a[k]; return s / (t || 1); };
+    return jump(cols) > 1.15 * jump(rows);
+  }
+  function rotate(c, quarter) {      // quarter 1 = clockwise, 3 = anticlockwise
+    var o = document.createElement('canvas'); o.width = c.height; o.height = c.width;
+    var g = o.getContext('2d'); g.translate(o.width / 2, o.height / 2); g.rotate(quarter * Math.PI / 2); g.drawImage(c, -c.width / 2, -c.height / 2);
+    return o;
+  }
+  // The book's middle (gutter) = the darkest band near the centre (38–62 %), with a small pull towards the exact centre.
+  function splitSpread(c) {
+    var m = greySmall(c, 600), g = m.g, w = m.w, h = m.h, col = new Float32Array(w), x, y;
+    for (x = 0; x < w; x++) { var s = 0; for (y = 0; y < h; y++) s += g[y * w + x]; col[x] = s / h; }
+    var best = Math.round(w / 2), bv = 1e9;
+    for (x = Math.round(w * 0.38); x < w * 0.62; x++) { var v = (col[x - 2] + col[x - 1] + col[x] + col[x + 1] + col[x + 2]) / 5 + 40 * Math.abs(x / w - 0.5); if (v < bv) { bv = v; best = x; } }
+    var cut = Math.round(best / w * c.width);
+    var mk = function (x0, x1) { var o = document.createElement('canvas'); o.width = x1 - x0; o.height = c.height; o.getContext('2d').drawImage(c, x0, 0, x1 - x0, c.height, 0, 0, x1 - x0, c.height); return o; };
+    return [mk(0, cut), mk(cut, c.width)];
+  }
+  function process(c) {
+    var auto = $('autocut').checked, step = Promise.resolve(c);
+    if (auto) step = getCv().then(function (w) {
+      var q = findPaper(w.cv, c);
+      return q ? warp(c, q) : c;
+    }).catch(function (e) { say(e.message + '。这一页没有切边。', 'bad'); return c; });
+    return step.then(function (out) {
+      if (auto && linesRunDown(out)) out = rotate(out, 3);
+      var parts = ($('split').checked && out.width > out.height * 1.15) ? splitSpread(out) : [out];
+      parts.forEach(function (p) { pages.push({ orig: p.toDataURL('image/jpeg', 0.92), w: p.width, h: p.height, quad: null, cut: null, rot: 0 }); });
+      return parts.length;
+    });
+  }
+  // ---------- photo check right after taking it (JR 15-Oct: let the system catch a bad photo, not the copier) ----------
+  // Limits measured on mum's 72 real photos (15-Oct): paper brightness 184-221, sharpness 5.3-22, shadow ratio 0.56-0.81;
+  // a dark photo's paper ~80; edge sharpness (99.5th pct) real 81-300+, blurred 14. Only clear failures warn: 0 of 72 real photos warned.
+  function grey(c, side) {
+    var s = side / Math.max(c.width, c.height), w = Math.max(1, Math.round(c.width * s)), h = Math.max(1, Math.round(c.height * s));
+    var o = document.createElement('canvas'); o.width = w; o.height = h; o.getContext('2d').drawImage(c, 0, 0, w, h);
+    var d = o.getContext('2d').getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+    for (var i = 0; i < w * h; i++) g[i] = 0.299 * d[4 * i] + 0.587 * d[4 * i + 1] + 0.114 * d[4 * i + 2];
+    return { g: g, w: w, h: h };
+  }
+  function pct(a, q) { var b = Array.prototype.slice.call(a).sort(function (x, y) { return x - y; }); return b[Math.min(b.length - 1, Math.floor(q * b.length))]; }
+  function checkPhoto(c) {
+    var issues = [], A = grey(c, 500), cells = [];
+    var y0 = Math.floor(A.h * 0.15), y1 = Math.floor(A.h * 0.85), x0 = Math.floor(A.w * 0.15), x1 = Math.floor(A.w * 0.85);
+    for (var i = 0; i < 6; i++) for (var j = 0; j < 6; j++) {
+      var v = [], ya = y0 + Math.floor(i * (y1 - y0) / 6), yb = y0 + Math.floor((i + 1) * (y1 - y0) / 6);
+      var xa = x0 + Math.floor(j * (x1 - x0) / 6), xb = x0 + Math.floor((j + 1) * (x1 - x0) / 6);
+      for (var y = ya; y < yb; y += 2) for (var x = xa; x < xb; x += 2) v.push(A.g[y * A.w + x]);
+      cells.push(pct(v, 0.9));
+    }
+    var paper = pct(cells, 0.9), shade = pct(cells, 0.1) / Math.max(1, paper);
+    if (paper < 140) issues.push('太暗');
+    else if (shade < 0.5) issues.push('影子很深');
+    var B = grey(c, 1000), hist = new Uint32Array(1024), n = 0;   // sharpness = the strongest 0.5 % of edges, so a nearly empty page is not 'blurred'
+    for (y = Math.floor(B.h * 0.2); y < Math.floor(B.h * 0.8); y++) for (x = Math.floor(B.w * 0.2); x < Math.floor(B.w * 0.8); x++) {
+      var k = y * B.w + x; hist[Math.min(1023, Math.round(Math.abs(B.g[k - 1] + B.g[k + 1] + B.g[k - B.w] + B.g[k + B.w] - 4 * B.g[k])))]++; n++;
+    }
+    var top = 0, e = 1023; while (e > 0 && top + hist[e] <= 0.005 * n) { top += hist[e]; e--; }
+    if (e < 40) issues.push('糊了');      // real photos 81-300+, a blurred one 14
+    return issues;
+  }
+  function addCanvas(c) {
+    var issues = checkPhoto(c), before = pages.length;
+    return process(c).then(function (k) {
+      if (issues.length) {
+        for (var i = before; i < pages.length; i++) pages[i].warn = issues.join('、');
+        say('⚠ 这张照片' + issues.join('、') + '。最好重拍：按这一页的 ✕ 删掉，再拍一次。', 'bad');
+      }
+      return k;
+    });
+  }
+  function fileToCanvas(file) {
+    var url = URL.createObjectURL(file);
+    return loadImage(url).then(function (im) {      // browsers apply the photo's EXIF rotation when decoding
+      var s = Math.min(1, MAX_SIDE / Math.max(im.naturalWidth, im.naturalHeight));
+      var c = document.createElement('canvas');
+      c.width = Math.round(im.naturalWidth * s); c.height = Math.round(im.naturalHeight * s);
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url); return c;
+    });
+  }
+  var queue = Promise.resolve();
+  function enqueue(job) { queue = queue.then(job).then(drawPages, function () { drawPages(); }); return queue; }
+  function addFiles(list) {
+    var files = Array.prototype.slice.call(list || []);
+    files.forEach(function (f) { enqueue(function () { say('处理照片中……'); return fileToCanvas(f).then(addCanvas); }); });
+    enqueue(function () { if (!pages.some(function (p) { return p.warn; })) say('现在有 ' + pages.length + ' 页。'); });
+  }
+  $('cam').onchange = function () { addFiles(this.files); this.value = ''; if (!liveOK) $('camBtn').firstChild.nodeValue = '📷 拍下一页'; };
+  $('gallery').onchange = function () { addFiles(this.files); this.value = ''; };
+
+  // ---------- corner editor ----------
+  var ed = null;   // {page, im, quad (orig px), scale, ox, oy, drag}
+  function openEditor(page) {
+    loadImage(page.orig).then(function (im) {
+      var q = page.quad ? page.quad.map(function (p) { return p.slice(); }) :
+        [[im.naturalWidth * .05, im.naturalHeight * .05], [im.naturalWidth * .95, im.naturalHeight * .05], [im.naturalWidth * .95, im.naturalHeight * .95], [im.naturalWidth * .05, im.naturalHeight * .95]];
+      ed = { page: page, im: im, quad: q, drag: -1 };
+      show('edLayer', true); edLayout(); edDraw();
+    });
+  }
+  function edLayout() {
+    var c = $('edCanvas'), r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+    var s = Math.min(c.width / ed.im.naturalWidth, c.height / ed.im.naturalHeight) * 0.92;
+    ed.scale = s; ed.ox = (c.width - ed.im.naturalWidth * s) / 2; ed.oy = (c.height - ed.im.naturalHeight * s) / 2; ed.dpr = dpr;
+  }
+  function edDraw() {
+    var c = $('edCanvas'), g = c.getContext('2d');
+    g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(ed.im, ed.ox, ed.oy, ed.im.naturalWidth * ed.scale, ed.im.naturalHeight * ed.scale);
+    var P = ed.quad.map(function (p) { return [ed.ox + p[0] * ed.scale, ed.oy + p[1] * ed.scale]; });
+    g.strokeStyle = '#e9b949'; g.lineWidth = 3 * ed.dpr; g.beginPath();
+    P.forEach(function (p, i) { if (i) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]); }); g.closePath(); g.stroke();
+    P.forEach(function (p) { g.beginPath(); g.arc(p[0], p[1], 16 * ed.dpr, 0, 6.3); g.fillStyle = 'rgba(233,185,73,.6)'; g.fill(); g.stroke(); });
+  }
+  function edPoint(ev) {
+    var r = $('edCanvas').getBoundingClientRect(), t = ev.touches ? ev.touches[0] : ev;
+    return [(t.clientX - r.left) * ed.dpr, (t.clientY - r.top) * ed.dpr];
+  }
+  function edDown(ev) {
+    if (!ed) return; var p = edPoint(ev), best = -1, bd = 60 * ed.dpr;
+    ed.quad.forEach(function (q, i) { var d = Math.hypot(ed.ox + q[0] * ed.scale - p[0], ed.oy + q[1] * ed.scale - p[1]); if (d < bd) { bd = d; best = i; } });
+    ed.drag = best; ev.preventDefault();
+  }
+  function edMove(ev) {
+    if (!ed || ed.drag < 0) return; var p = edPoint(ev);
+    var x = (p[0] - ed.ox) / ed.scale, y = (p[1] - ed.oy) / ed.scale;
+    ed.quad[ed.drag] = [Math.max(0, Math.min(ed.im.naturalWidth, x)), Math.max(0, Math.min(ed.im.naturalHeight, y))];
+    edDraw(); ev.preventDefault();
+  }
+  function edUp() { if (ed) ed.drag = -1; }
+  var ec = $('edCanvas');
+  ec.addEventListener('mousedown', edDown); ec.addEventListener('mousemove', edMove); window.addEventListener('mouseup', edUp);
+  ec.addEventListener('touchstart', edDown, { passive: false }); ec.addEventListener('touchmove', edMove, { passive: false }); ec.addEventListener('touchend', edUp);
+  $('edCancel').onclick = function () { ed = null; show('edLayer', false); };
+  $('edFull').onclick = function () { var p = ed.page; p.quad = null; p.cut = null; ed = null; show('edLayer', false); drawPages(); };
+  $('edSave').onclick = function () {
+    var p = ed.page; p.quad = order(ed.quad); ed = null; show('edLayer', false);
+    say('切边中……'); cutPage(p).then(function () { say('切好了。'); drawPages(); });
+  };
+
+  // ---------- render one page: cut + rotation + optional clean-up ----------
+  function render(page, maxSide) {
+    return loadImage(page.cut || page.orig).then(function (im) {
+      var w = im.naturalWidth, h = im.naturalHeight, s = Math.min(1, maxSide / Math.max(w, h));
+      var sw = Math.round(w * s), sh = Math.round(h * s), turn = page.rot % 2 === 1;
+      var c = document.createElement('canvas');
+      c.width = turn ? sh : sw; c.height = turn ? sw : sh;
+      var g = c.getContext('2d');
+      g.translate(c.width / 2, c.height / 2); g.rotate(page.rot * Math.PI / 2);
+      g.drawImage(im, -sw / 2, -sh / 2, sw, sh);
+      if ($('enhance').checked) cleanUp(g, c.width, c.height);
+      return { url: c.toDataURL('image/jpeg', 0.92), w: c.width, h: c.height };
+    });
+  }
+  // Scan look: estimate the paper's own brightness everywhere (block max, widened, then smoothed, so ink and the
+  // hand's shadow do not count as "paper"), divide by it (shadows vanish), then stretch so paper is white, ink dark.
+  function cleanUp(g, w, h) {
+    var img = g.getImageData(0, 0, w, h), d = img.data, n = w * h, i, x, y;
+    var Y = new Float32Array(n);
+    for (i = 0; i < n; i++) Y[i] = (d[i * 4] * 299 + d[i * 4 + 1] * 587 + d[i * 4 + 2] * 114) / 1000;
+    var f = Math.max(1, Math.round(Math.max(w, h) / 120)), sw = Math.ceil(w / f), sh = Math.ceil(h / f), bg = new Float32Array(sw * sh);
+    for (y = 0; y < sh; y++) for (x = 0; x < sw; x++) {
+      var m = 0;
+      for (var yy = y * f; yy < Math.min(h, y * f + f); yy++) for (var xx = x * f; xx < Math.min(w, x * f + f); xx++) { var v = Y[yy * w + xx]; if (v > m) m = v; }
+      bg[y * sw + x] = m;
+    }
+    var pass = function (a, r, isMax) {            // separable max or mean filter over a (2r+1) square
+      var t = new Float32Array(a.length), o = new Float32Array(a.length), X, R, k, acc, cnt, v;
+      for (R = 0; R < sh; R++) for (X = 0; X < sw; X++) {
+        acc = 0; cnt = 0;
+        for (k = -r; k <= r; k++) { v = a[R * sw + Math.min(sw - 1, Math.max(0, X + k))]; if (isMax) { if (v > acc) acc = v; } else acc += v; cnt++; }
+        t[R * sw + X] = isMax ? acc : acc / cnt;
+      }
+      for (R = 0; R < sh; R++) for (X = 0; X < sw; X++) {
+        acc = 0; cnt = 0;
+        for (k = -r; k <= r; k++) { v = t[Math.min(sh - 1, Math.max(0, R + k)) * sw + X]; if (isMax) { if (v > acc) acc = v; } else acc += v; cnt++; }
+        o[R * sw + X] = isMax ? acc : acc / cnt;
+      }
+      return o;
+    };
+    bg = pass(pass(bg, 2, true), 3, false);
+    var out = new Float32Array(n), hist = new Array(256).fill(0);
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+      var fx = Math.min(sw - 1, x / f), fy = Math.min(sh - 1, y / f), x0 = Math.floor(fx), y0 = Math.floor(fy);
+      var x1 = Math.min(sw - 1, x0 + 1), y1 = Math.min(sh - 1, y0 + 1), ax = fx - x0, ay = fy - y0;
+      var b = (bg[y0 * sw + x0] * (1 - ax) + bg[y0 * sw + x1] * ax) * (1 - ay) + (bg[y1 * sw + x0] * (1 - ax) + bg[y1 * sw + x1] * ax) * ay;
+      var r = Math.min(255, 255 * Y[y * w + x] / Math.max(30, b)); out[y * w + x] = r; hist[r | 0]++;
+    }
+    var lo = 0, acc2 = 0; for (i = 0; i < 256; i++) { acc2 += hist[i]; if (acc2 > n * 0.01) { lo = i; break; } }
+    var white = 235, span = Math.max(1, white - lo);
+    for (i = 0; i < n; i++) { var q = (out[i] - lo) * 255 / span; q = q < 0 ? 0 : q > 255 ? 255 : q; d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = q; }
+    g.putImageData(img, 0, 0);
+  }
+
+  // ---------- page list ----------
+  function drawPages() {
+    var box = $('pages'); box.innerHTML = '';
+    $('make').disabled = $('clear').disabled = !pages.length;
+    pages.forEach(function (p, i) {
+      var card = document.createElement('div'); card.className = 'page';
+      var im = document.createElement('img'); card.appendChild(im);
+      render(p, 500).then(function (r) { im.src = r.url; });
+      var n = document.createElement('div'); n.className = 'n'; n.textContent = '第 ' + (i + 1) + ' 页' + (p.cut ? '　✂' : '') + (p.warn ? '　⚠ ' + p.warn : ''); if (p.warn) n.style.color = 'var(--bad)'; card.appendChild(n);
+      var tools = document.createElement('div'); tools.className = 'tools';
+      [['✂', function () { openEditor(p); }, true],
+       ['↻', function () { p.rot = (p.rot + 1) % 4; }],
+       ['⬆', function () { if (i > 0) { pages.splice(i - 1, 0, pages.splice(i, 1)[0]); } }],
+       ['⬇', function () { if (i < pages.length - 1) { pages.splice(i + 1, 0, pages.splice(i, 1)[0]); } }],
+       ['✕', function () { if (confirm('删掉第 ' + (i + 1) + ' 页？')) pages.splice(i, 1); }]
+      ].forEach(function (t) { var b = document.createElement('button'); b.textContent = t[0]; b.onclick = function () { t[1](); if (!t[2]) drawPages(); }; tools.appendChild(b); });
+      card.appendChild(tools); box.appendChild(card);
+    });
+  }
+  $('enhance').onchange = drawPages;
+  $('clear').onclick = function () { if (confirm('全部清掉？')) { pages = []; drawPages(); $('links').innerHTML = ''; say('已经清掉。'); $('name').value = '扫描-' + stamp(); } };
+
+  // ---------- build the two PDFs ----------
+  function fit(doc, r, x, y, w, h, margin) {
+    var bw = w - 2 * margin, bh = h - 2 * margin, s = Math.min(bw / r.w, bh / r.h);
+    var iw = r.w * s, ih = r.h * s;
+    doc.addImage(r.url, 'JPEG', x + (w - iw) / 2, y + (h - ih) / 2, iw, ih);
+  }
+  function buildPdfs(rendered) {
+    var J = window.jspdf.jsPDF;
+    var plain = null;     // one photo per A4 page, page turned to match the photo
+    rendered.forEach(function (r) {
+      var o = r.w > r.h ? 'landscape' : 'portrait';
+      if (!plain) plain = new J({ unit: 'mm', format: 'a4', orientation: o }); else plain.addPage('a4', o);
+      var W = o === 'portrait' ? 210 : 297, H = o === 'portrait' ? 297 : 210;
+      fit(plain, r, 0, 0, W, H, 5);
+    });
+    var two = new J({ unit: 'mm', format: 'a4', orientation: 'landscape' });   // 2-up 1|2, 3|4; printed at 100%
+    for (var i = 0; i < rendered.length; i += 2) {
+      if (i > 0) two.addPage('a4', 'landscape');
+      fit(two, rendered[i], 0, 0, 148.5, 210, 5);
+      if (rendered[i + 1]) fit(two, rendered[i + 1], 148.5, 0, 148.5, 210, 5);
+    }
+    return { plain: plain, two: two };
+  }
+  function download(doc, name) {
+    var a = document.createElement('a'); a.href = URL.createObjectURL(doc.output('blob')); a.download = name; a.textContent = '⬇ 下载 ' + name; return a;
+  }
+  $('make').onclick = function () {
+    if (!pages.length) return;
+    var base = ($('name').value.trim() || '扫描-' + stamp()).replace(/[\\\/:*?"<>|]/g, '-');
+    $('make').disabled = true; $('links').innerHTML = '';
+    say('做 PDF 中……（' + pages.length + ' 页）');
+    queue.then(function () {
+      return pages.reduce(function (p, pg) {
+        return p.then(function (acc) { return render(pg, MAX_SIDE).then(function (r) { acc.push(r); return acc; }); });
+      }, Promise.resolve([]));
+    }).then(function (rendered) {
+      var d = buildPdfs(rendered);
+      var n1 = base + '-原图.pdf';
+      $('links').appendChild(download(d.plain, n1));
+      if (!hasServer) { say('PDF 做好了，但没有连上 Google，只下载了，没有存到 Drive。', 'bad'); $('make').disabled = false; return; }
+      say('存到 Google Drive 中……');
+      var b64 = function (doc) { return doc.output('datauristring').split(',')[1]; };
+      return run('savePdfs', [pinValue, [{ name: n1, base64: b64(d.plain) }]]).then(function (saved) {
+        saved.forEach(function (f) { var a = document.createElement('a'); a.href = f.url; a.target = '_blank'; a.textContent = '☁ 在 Drive 打开：' + f.name; $('links').appendChild(a); });
+        say('存好了 ✅ 这一套完成。\n电脑大约 5 分钟后会整理好，放在 Drive「09_扫描 / 已整理」：\n「整理好.pdf」一页一张；「两页一面.pdf」拿去印（A4 横向、100%、双面、短边翻转）。', 'ok');
+        $('make').disabled = false; loadRecent();
+      });
+    }).catch(function (e) { say('出问题了：' + (e && e.message ? e.message : e) + '\n照片还在，可以再按一次。', 'bad'); $('make').disabled = false; });
+  };
+
+  // ---------- live camera: guide frame + level + live checks (only on a top-level HTTPS/localhost page, never inside Apps Script) ----------
+  // Apps Script's sandboxed iframe may not call getUserMedia, so there the old file-input camera stays.
+  var liveOK = !onGoogle && window.isSecureContext !== false && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  var camStream = null, camTrack = null, camTimer = 0, camRaf = 0, camMode = 'one';
+  var camIssues = null, camIssuesAt = 0, camGreenSince = 0, camArmed = true, camSnapping = false, camLastSnap = 0, camPending = 0;
+  var tilt = null, tiltLog = [], orientOn = false, orientRefused = false;
+  var camGrab = document.createElement('canvas');
+  var GREEN = '#5fbf77', ORANGE = '#f0a030', HOLD_MS = 1200;
+
+  function applyCamUi() {
+    show('liveBtn', liveOK);
+    $('camBtn').classList.toggle('small', liveOK);
+    if (liveOK) $('camBtn').firstChild.nodeValue = '用手机自己的相机';
+  }
+  function camFail(e) {
+    var n = e && e.name || '';
+    var why = n === 'NotAllowedError' || n === 'SecurityError' ? '没有允许用相机' : n === 'NotFoundError' || n === 'OverconstrainedError' ? '找不到相机' : (e && e.message) || '原因不明';
+    liveOK = false; applyCamUi();
+    $('camBtn').firstChild.nodeValue = '📷 拍一页';
+    say('相机打不开（' + why + '）。改用手机自己的相机：按「📷 拍一页」。', 'bad');
+  }
+  function getStream() {
+    var md = navigator.mediaDevices;
+    return md.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false }).catch(function (e) {
+      if (e && /Overconstrained|ConstraintNotSatisfied/.test(e.name || '')) return md.getUserMedia({ video: true, audio: false });
+      throw e;
+    });
+  }
+
+  // level: deviceorientation beta/gamma, ~0 when the phone lies flat above the page
+  function onOrient(ev) {
+    if (ev.beta == null || ev.gamma == null) return;
+    var t = Date.now();
+    tilt = { beta: ev.beta, gamma: ev.gamma, t: t };
+    tiltLog.push(tilt);
+    while (tiltLog.length && tiltLog[0].t < t - 1500) tiltLog.shift();
+  }
+  function attachOrient() { if (orientOn) return; window.addEventListener('deviceorientation', onOrient); orientOn = true; }
+  function levelState() {     // null = no level on this device
+    if (!tilt || orientRefused) return null;
+    return { beta: tilt.beta, gamma: tilt.gamma, ok: Math.abs(tilt.beta) < 5 && Math.abs(tilt.gamma) < 5 };
+  }
+  function steady(now) {      // level moved less than 2 degrees over the last second (no level => cannot tell, say yes)
+    if (!tilt || orientRefused) return true;
+    var lo1 = tilt.beta, hi1 = tilt.beta, lo2 = tilt.gamma, hi2 = tilt.gamma;
+    tiltLog.forEach(function (p) {
+      if (p.t < now - 1000) return;
+      lo1 = Math.min(lo1, p.beta); hi1 = Math.max(hi1, p.beta); lo2 = Math.min(lo2, p.gamma); hi2 = Math.max(hi2, p.gamma);
+    });
+    return (hi1 - lo1) < 2 && (hi2 - lo2) < 2;
+  }
+
+  function openCamera() {
+    var perm = null;       // iOS: the permission question must be asked straight from the tap
+    try { if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') perm = DeviceOrientationEvent.requestPermission(); } catch (e) { perm = null; }
+    say('打开相机中……');
+    getStream().then(function (stream) {
+      camStream = stream; camTrack = stream.getVideoTracks()[0];
+      camTrack.addEventListener('ended', function () { if (camStream) { closeCamera(); say('相机停了，请再按一次「📷 开相机拍」。', 'bad'); } });
+      var v = $('camVideo'); v.srcObject = stream;
+      camIssues = null; camGreenSince = 0; camArmed = true; camSnapping = false; camLastSnap = 0;
+      tilt = null; tiltLog = []; orientRefused = false;
+      show('camLayer', true); document.body.style.overflow = 'hidden';
+      var pl = v.play && v.play(); if (pl && pl.catch) pl.catch(function () {});
+      if (perm && typeof perm.then === 'function') perm.then(function (st) { if (st === 'granted') attachOrient(); else orientRefused = true; }, function () { orientRefused = true; });
+      else if ('DeviceOrientationEvent' in window) attachOrient();
+      camTimer = setInterval(camCheck, 400);
+      camRaf = requestAnimationFrame(camDraw);
+      camCount(); say('相机开了。拍完按「完成」。');
+    }).catch(camFail);
+  }
+  function closeCamera() {
+    clearInterval(camTimer); cancelAnimationFrame(camRaf); camTimer = camRaf = 0;
+    if (orientOn) { window.removeEventListener('deviceorientation', onOrient); orientOn = false; }
+    if (camStream) camStream.getTracks().forEach(function (t) { t.stop(); });
+    camStream = camTrack = null;
+    $('camVideo').srcObject = null;
+    show('camLayer', false); document.body.style.overflow = '';
+    enqueue(function () { if (!pages.some(function (p) { return p.warn; })) say('现在有 ' + pages.length + ' 页。'); });
+  }
+  function camCount() { $('camCount').textContent = '已拍 ' + (pages.length + camPending) + ' 页'; }
+  function camToast(text) {
+    var t = $('camToast'); t.textContent = text; show('camToast', true);
+    clearTimeout(camToast.h); camToast.h = setTimeout(function () { show('camToast', false); }, 3500);
+  }
+
+  // live checks every ~400 ms on a small grab: the SAME checkPhoto() as after a photo.
+  // (Grab is ~1000 px, not 500: checkPhoto's sharpness test is calibrated at 1000 px and would read a smaller grab as 'blurred'.)
+  function camCheck() {
+    var v = $('camVideo');
+    if (!v.videoWidth || camSnapping) return;
+    var s = Math.min(1, 1000 / Math.max(v.videoWidth, v.videoHeight));
+    camGrab.width = Math.round(v.videoWidth * s); camGrab.height = Math.round(v.videoHeight * s);
+    camGrab.getContext('2d').drawImage(v, 0, 0, camGrab.width, camGrab.height);
+    try { camIssues = checkPhoto(camGrab); } catch (e) { camIssues = []; }
+    camIssuesAt = Date.now();
+  }
+
+  // the guide frame, inside the part of the screen the picture really covers (video is letterboxed, so frame = what gets saved)
+  function frameRect(W, H) {
+    var v = $('camVideo'), vw = v.videoWidth || W, vh = v.videoHeight || H, k = Math.min(W / vw, H / vh);
+    var rw = vw * k, rh = vh * k, rx = (W - rw) / 2, ry = (H - rh) / 2;
+    var fh = rh * 0.88, fw = fh / 1.414;
+    if (fw > rw * 0.88) { fw = rw * 0.88; fh = fw * 1.414; }
+    // one page: A4 upright. two pages: the open book lies sideways on the portrait screen, so the same tall shape, spine across the middle.
+    return { x: rx + (rw - fw) / 2, y: ry + (rh - fh) / 2, w: fw, h: fh };
+  }
+  function camDraw() {
+    camRaf = requestAnimationFrame(camDraw);
+    var L = $('camLayer'), cv = $('camOverlay'), W = L.clientWidth, H = L.clientHeight, dpr = window.devicePixelRatio || 1;
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    var g = cv.getContext('2d'), now = Date.now();
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+
+    var lv = levelState(), fresh = !!camIssues && now - camIssuesAt < 1500;
+    var issues = fresh ? camIssues : [], steadyNow = steady(now);
+    var green = fresh && !issues.length && (!lv || lv.ok) && steadyNow && !camSnapping;
+    if (!green) { camGreenSince = 0; camArmed = true; }
+    else if (!camGreenSince) camGreenSince = now;
+    if (green && camArmed && now - camGreenSince >= HOLD_MS && now - camLastSnap > 1500) snap();
+
+    var f = frameRect(W, H), col = green ? GREEN : ORANGE;
+    g.fillStyle = 'rgba(0,0,0,.38)'; g.beginPath(); g.rect(0, 0, W, H); g.rect(f.x, f.y, f.w, f.h); g.fill('evenodd');
+    g.lineWidth = 5; g.strokeStyle = col; g.setLineDash([]); g.strokeRect(f.x, f.y, f.w, f.h);
+    if (camMode === 'two') {
+      g.lineWidth = 3; g.setLineDash([14, 10]); g.beginPath(); g.moveTo(f.x, f.y + f.h / 2); g.lineTo(f.x + f.w, f.y + f.h / 2); g.stroke(); g.setLineDash([]);
+    }
+    if (green && camGreenSince) {       // hold-still progress along the bottom edge of the frame
+      g.fillStyle = GREEN; g.fillRect(f.x, f.y + f.h + 6, f.w * Math.min(1, (now - camGreenSince) / HOLD_MS), 6);
+    }
+    if (lv) {                           // the level: dot centred = phone flat
+      var R = 36, cx = W - 52, cy = 150, lim = R - 9, c5 = lim * 5 / 20;
+      var dx = Math.max(-1, Math.min(1, lv.gamma / 20)) * lim, dy = Math.max(-1, Math.min(1, lv.beta / 20)) * lim;
+      g.fillStyle = 'rgba(0,0,0,.55)'; g.beginPath(); g.arc(cx, cy, R, 0, 6.3); g.fill();
+      g.lineWidth = 2; g.strokeStyle = 'rgba(255,255,255,.8)'; g.beginPath(); g.arc(cx, cy, R, 0, 6.3); g.stroke();
+      g.strokeStyle = 'rgba(255,255,255,.5)'; g.beginPath(); g.arc(cx, cy, c5, 0, 6.3); g.stroke();
+      g.beginPath(); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.stroke();
+      g.fillStyle = lv.ok ? GREEN : ORANGE; g.beginPath(); g.arc(cx + dx, cy + dy, 9, 0, 6.3); g.fill();
+      if (!lv.ok) { g.font = '700 18px system-ui, sans-serif'; g.textAlign = 'center'; g.fillStyle = ORANGE; g.strokeStyle = '#000'; g.lineWidth = 4; g.strokeText('手机放平', cx, cy + R + 24); g.fillText('手机放平', cx, cy + R + 24); }
+    }
+    var txt = $('camIssue'), msg = '', good = false;
+    if (issues.length) msg = issues.join('　');
+    else if (fresh && !steadyNow) msg = '拿稳';
+    else if (green) { msg = '稳住，马上拍'; good = true; }
+    if (txt.textContent !== msg) txt.textContent = msg;
+    txt.classList.toggle('good', good);
+  }
+
+  // ---------- take the picture: same road as a picked photo (addCanvas -> process -> pages) ----------
+  function scaleTo(src, sw, sh) {
+    var s = Math.min(1, MAX_SIDE / Math.max(sw, sh)), c = document.createElement('canvas');
+    c.width = Math.round(sw * s); c.height = Math.round(sh * s);
+    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+    return c;
+  }
+  function takeHi(frame, vw, vh) {      // a real still photo is sharper than a video frame; use it only if it arrives fast and has the same orientation
+    return new Promise(function (ok) {
+      var done = false, fin = function (c) { if (!done) { done = true; ok(c); } };
+      setTimeout(function () { fin(frame); }, 3000);
+      try {
+        new ImageCapture(camTrack).takePhoto().then(fileToCanvas).then(function (c) {
+          fin(((c.height >= c.width) === (vh >= vw)) && c.width * c.height >= frame.width * frame.height ? c : frame);
+        }).catch(function () { fin(frame); });
+      } catch (e) { fin(frame); }
+    });
+  }
+  function flash() {
+    var f = $('camFlash'); f.style.transition = 'none'; f.style.opacity = '0.85'; void f.offsetWidth;
+    f.style.transition = 'opacity .35s'; f.style.opacity = '0';
+    try { if (navigator.vibrate) navigator.vibrate(60); } catch (e) {}
+  }
+  function snap() {
+    var v = $('camVideo');
+    if (camSnapping || !v.videoWidth) return;
+    camSnapping = true; camArmed = false; camGreenSince = 0; camLastSnap = Date.now();
+    flash();
+    var vw = v.videoWidth, vh = v.videoHeight, frame = scaleTo(v, vw, vh);
+    var got = (camTrack && window.ImageCapture) ? takeHi(frame, vw, vh) : Promise.resolve(frame);
+    got.then(function (c) {
+      camPending++; camCount();
+      queue = queue.then(function () { return addCanvas(c); }).then(function () {
+        camPending--; camCount();
+        var last = pages[pages.length - 1];
+        if (last && last.warn) camToast('⚠ 上一页' + last.warn + '。完成后可以删掉重拍。');
+      }, function () { camPending--; camCount(); });
+    }).then(function () { camSnapping = false; camLastSnap = Date.now(); });
+  }
+  function setMode(m) { camMode = m; $('modeOne').classList.toggle('on', m === 'one'); $('modeTwo').classList.toggle('on', m === 'two'); }
+
+  $('liveBtn').onclick = openCamera;
+  $('camShot').onclick = snap;
+  $('camDone').onclick = closeCamera;
+  $('modeOne').onclick = function () { setMode('one'); };
+  $('modeTwo').onclick = function () { setMode('two'); };
+
+  // Test hooks for the local check only (add a picture without the camera).
+  window.__jrScanAddCanvas = function (c) { return enqueue(function () { return addCanvas(c); }); };
+  window.__jrScanPages = function () { return pages.map(function (p) { return { w: p.w, h: p.h, quad: p.quad, cut: !!p.cut }; }); };
+
+  start();
+})();
+</script>
+</body>
+</html>
