@@ -608,7 +608,9 @@
   var camIssues = null, camIssuesAt = 0, camGreenSince = 0, camArmed = true, camSnapping = false, camLastSnap = 0, camPending = 0;
   var tilt = null, tiltLog = [], orientOn = false, orientRefused = false;
   var camGrab = document.createElement('canvas');
-  var GREEN = '#5fbf77', ORANGE = '#f0a030', HOLD_MS = 1200;
+  var GREEN = '#5fbf77', ORANGE = '#f0a030', HOLD_MS = 1500;   // 16-Oct JR: 1200 felt too fast
+  var REARM_MS = 800;        // after a snap, 'not ready' must last this long (the hand turning the page) before the next auto snap
+  var camPaper = null, camNotGreenSince = 0, paperGrab = document.createElement('canvas');
 
   // 16-Oct: JR saw no frame and no auto-snap, and the page never said why. Without the live camera, say so on the page,
   // name the likely cause (old Google address / opened inside WhatsApp etc. / camera refused) and give the address to open.
@@ -626,7 +628,7 @@
     if (liveOK) $('camBtn').firstChild.nodeValue = '用手机自己的相机';
     show('camWhy', !liveOK);
     if (!liveOK) $('camWhyText').textContent = noLiveWhy(failWhy);
-    $('ver').textContent = 'v7.1 · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
+    $('ver').textContent = 'v7.2 · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
   }
   $('camWhyCopy').onclick = function () {
     var done = function () { $('camWhyCopy').textContent = '✅ 复制好了，去 Safari / Chrome 贴上'; };
@@ -705,6 +707,37 @@
     clearTimeout(camToast.h); camToast.h = setTimeout(function () { show('camToast', false); }, 3500);
   }
 
+  // 16-Oct JR test: the auto snap took the keyboard and the empty table, because checkPhoto() only asks bright / sharp / no deep shadow.
+  // paperIn(): is a sheet with words filling the guide frame? Cut the frame out of the video, 300 px wide, 6 x 8 cells. A cell is PAPER when its
+  // bright part is near-grey (no wood colour) and at least half of it is plain background; it has WORDS when 0.3-25 % of it is clearly darker.
+  // Measured 16-Oct on 41 real phone photos of papers (white >= 0.73, words >= 0.21: all pass) and 6 views from JR's test (keyboard, laptop,
+  // palm rest, wood: none pass). Used ONLY for the auto snap; the round button always takes the picture.
+  function pct1(a, q) { a.sort(function (x, y) { return x - y; }); return a[Math.min(a.length - 1, Math.floor(q * a.length))]; }
+  function paperIn(src, sx, sy, sw, sh) {
+    var W = 300, H = Math.max(8, Math.round(W * sh / sw));
+    paperGrab.width = W; paperGrab.height = H;
+    var g2 = paperGrab.getContext('2d'); g2.drawImage(src, sx, sy, sw, sh, 0, 0, W, H);
+    var d = g2.getImageData(0, 0, W, H).data, rows = 8, cols = 6, white = 0, ink = 0;
+    for (var i = 0; i < rows; i++) for (var j = 0; j < cols; j++) {
+      var g = [], c = [], ya = Math.floor(i * H / rows), yb = Math.floor((i + 1) * H / rows), xa = Math.floor(j * W / cols), xb = Math.floor((j + 1) * W / cols);
+      for (var y = ya; y < yb; y++) for (var x = xa; x < xb; x++) {
+        var k = (y * W + x) * 4, r = d[k], gg = d[k + 1], b = d[k + 2];
+        g.push((r + gg + b) / 3); c.push(Math.max(r, gg, b) - Math.min(r, gg, b));
+      }
+      var srt = g.slice(), p90 = pct1(srt, 0.9), med = srt[Math.floor(srt.length / 2)], cs = 0, cn = 0, dark = 0;
+      for (var m = 0; m < g.length; m++) { if (g[m] >= p90 * 0.92) { cs += c[m]; cn++; } if (g[m] < p90 * 0.55) dark++; }
+      var isWhite = p90 >= 110 && cs / Math.max(1, cn) <= 45 && med >= p90 * 0.86, df = dark / g.length;
+      if (isWhite) { white++; if (df >= 0.003 && df <= 0.25) ink++; }
+    }
+    var n = rows * cols;
+    return { white: white / n, ink: ink / n, ok: white / n >= 0.7 && ink / n >= 0.15 };
+  }
+  function frameInVideo(vw, vh) {   // the same box as frameRect(), in video pixels
+    var fh = vh * 0.88, fw = fh / 1.414;
+    if (fw > vw * 0.88) { fw = vw * 0.88; fh = fw * 1.414; }
+    return { x: (vw - fw) / 2, y: (vh - fh) / 2, w: fw, h: fh };
+  }
+
   // live checks every ~400 ms on a small grab: the SAME checkPhoto() as after a photo.
   // (Grab is ~1000 px, not 500: checkPhoto's sharpness test is calibrated at 1000 px and would read a smaller grab as 'blurred'.)
   function camCheck() {
@@ -714,6 +747,7 @@
     camGrab.width = Math.round(v.videoWidth * s); camGrab.height = Math.round(v.videoHeight * s);
     camGrab.getContext('2d').drawImage(v, 0, 0, camGrab.width, camGrab.height);
     try { camIssues = checkPhoto(camGrab); } catch (e) { camIssues = []; }
+    try { var fr = frameInVideo(camGrab.width, camGrab.height); camPaper = paperIn(camGrab, fr.x, fr.y, fr.w, fr.h); } catch (e) { camPaper = null; }
     camIssuesAt = Date.now();
   }
 
@@ -735,9 +769,14 @@
 
     var lv = levelState(), fresh = !!camIssues && now - camIssuesAt < 1500;
     var issues = fresh ? camIssues : [], steadyNow = steady(now);
-    var green = fresh && !issues.length && (!lv || lv.ok) && steadyNow && !camSnapping;
-    if (!green) { camGreenSince = 0; camArmed = true; }
-    else if (!camGreenSince) camGreenSince = now;
+    var paperOk = !!(camPaper && camPaper.ok);
+    var green = fresh && paperOk && !issues.length && (!lv || lv.ok) && steadyNow && !camSnapping;
+    if (!green) {
+      camGreenSince = 0;
+      if (camSnapping) camNotGreenSince = 0;                       // saving the photo is not 'turning the page'
+      else if (!camNotGreenSince) camNotGreenSince = now;
+      if (camNotGreenSince && now - camNotGreenSince >= REARM_MS) camArmed = true;   // a short wobble on the same page does not re-arm
+    } else { camNotGreenSince = 0; if (!camGreenSince) camGreenSince = now; }
     if (green && camArmed && now - camGreenSince >= HOLD_MS && now - camLastSnap > 1500) snap();
 
     var f = frameRect(W, H), col = green ? GREEN : ORANGE;
@@ -746,7 +785,7 @@
     if (camMode === 'two') {
       g.lineWidth = 3; g.setLineDash([14, 10]); g.beginPath(); g.moveTo(f.x, f.y + f.h / 2); g.lineTo(f.x + f.w, f.y + f.h / 2); g.stroke(); g.setLineDash([]);
     }
-    if (green && camGreenSince) {       // hold-still progress along the bottom edge of the frame
+    if (green && camArmed && camGreenSince) {       // hold-still progress along the bottom edge of the frame
       g.fillStyle = GREEN; g.fillRect(f.x, f.y + f.h + 6, f.w * Math.min(1, (now - camGreenSince) / HOLD_MS), 6);
     }
     if (lv) {                           // the level: dot centred = phone flat
@@ -760,9 +799,11 @@
       if (!lv.ok) { g.font = '700 18px system-ui, sans-serif'; g.textAlign = 'center'; g.fillStyle = ORANGE; g.strokeStyle = '#000'; g.lineWidth = 4; g.strokeText('手机放平', cx, cy + R + 24); g.fillText('手机放平', cx, cy + R + 24); }
     }
     var txt = $('camIssue'), msg = '', good = false;
-    if (issues.length) msg = issues.join('　');
+    if (fresh && !paperOk) msg = '把整张纸放进框里';
+    else if (issues.length) msg = issues.join('　');
     else if (fresh && !steadyNow) msg = '拿稳';
-    else if (green) { msg = '稳住，马上拍'; good = true; }
+    else if (green && camArmed) { msg = '稳住，马上拍'; good = true; }
+    else if (green) { msg = '翻下一页'; good = true; }
     if (txt.textContent !== msg) txt.textContent = msg;
     txt.classList.toggle('good', good);
   }
@@ -804,7 +845,7 @@
         var last = pages[pages.length - 1];
         if (last && last.warn) camToast('⚠ 上一页' + last.warn + '。完成后可以删掉重拍。');
       }, function () { camPending--; camCount(); });
-    }).then(function () { camSnapping = false; camLastSnap = Date.now(); });
+    }).then(function () { camSnapping = false; camLastSnap = Date.now(); camNotGreenSince = 0; });
   }
   function setMode(m) { camMode = m; $('modeOne').classList.toggle('on', m === 'one'); $('modeTwo').classList.toggle('on', m === 'two'); }
 
@@ -816,6 +857,7 @@
 
   // Test hooks for the local check only (add a picture without the camera).
   window.__jrScanAddCanvas = function (c) { return enqueue(function () { return addCanvas(c); }); };
+  window.__jrScanPaper = function (c) { return paperIn(c, 0, 0, c.width, c.height); };
   window.__jrScanPages = function () { return pages.map(function (p) { return { w: p.w, h: p.h, quad: p.quad, cut: !!p.cut }; }); };
 
   start();
