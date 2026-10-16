@@ -74,6 +74,10 @@
       <label class="btn" id="camBtn">📷 拍一页<input id="cam" type="file" accept="image/*" capture="environment" class="hidden"></label>
       <label class="btn ghost">🖼 从相册选（可以一次选很多张）<input id="gallery" type="file" accept="image/*" multiple class="hidden"></label>
     </div>
+    <div id="camWhy" class="msg bad hidden"><span id="camWhyText"></span>
+      <div class="links"><a id="camWhyLink" href="https://jrchan-lab.github.io/jr-scan/" target="_blank" rel="noopener">https://jrchan-lab.github.io/jr-scan/</a></div>
+      <div class="row"><button id="camWhyCopy" class="ghost">📋 复制网址</button></div>
+    </div>
     <p class="hint">拍完一页，再按「📷 拍下一页」，一直拍下去，顺序会自动排好。手机的影子会自动淡掉。拍完可以按 ✂ 调边、↻ 转方向、⬆⬇ 换顺序、✕ 删掉。</p>
 
     <p class="hint">手机只存清楚的原图。电脑会自动切边、拉正、去影子，再做好「两页一面」给你印（大约 5 分钟后，在 Drive 的「09_扫描 / 已整理」）。</p>
@@ -96,6 +100,7 @@
     <p style="margin-top:24px">最近存的文件：</p>
     <div id="recent" class="links hint">（还没有）</div>
   </section>
+  <p id="ver" class="hint" style="margin-top:28px;text-align:center"></p>
 </main>
 
 <!-- corner editor layer -->
@@ -130,7 +135,7 @@
 (function () {
   // Big C fills in JR's Apps Script web-app address (https://script.google.com/macros/s/.../exec) before the page is published on GitHub Pages.
   // Inside Apps Script itself this stays unused (google.script.run is used instead).
-  var EXEC_URL = 'https://script.google.com/macros/s/AKfycbyxbS6gZNiC37tzVZgdoM4eJLfdWZAKOU5rGPMp-D9XRwd8DTkhQL4Braa3lYnddZ3e1A/exec';   // JR's JR 扫描 deployment, given 15-Oct evening
+  var EXEC_URL = 'https://script.google.com/macros/s/AKfycbyxbS6gZNiC37tzVZgdoM4eJLfdWZAKOU5rGPMp-D9XRwd8DTkhQL4Braa3lYnddZ3e1A/exec';   // filled in only in the published copy (apps/scanner/publish_jr_scan.py); the address never goes into this repo
   var onGoogle = typeof google !== 'undefined' && google.script && google.script.run;
   var hasServer = !!(onGoogle || EXEC_URL);     // false = nothing to save to: the PDF is only downloaded
   var pages = [];            // {orig: dataURL, w, h, quad: [[x,y]x4] in orig px or null, cut: dataURL|null, rot: 0..3}
@@ -605,15 +610,33 @@
   var camGrab = document.createElement('canvas');
   var GREEN = '#5fbf77', ORANGE = '#f0a030', HOLD_MS = 1200;
 
-  function applyCamUi() {
+  // 16-Oct: JR saw no frame and no auto-snap, and the page never said why. Without the live camera, say so on the page,
+  // name the likely cause (old Google address / opened inside WhatsApp etc. / camera refused) and give the address to open.
+  var NEW_ADDR = 'https://jrchan-lab.github.io/jr-scan/';
+  var inApp = /WhatsApp|FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Telegram|; wv\)/i.test(navigator.userAgent || '');
+  function noLiveWhy(failWhy) {
+    if (onGoogle) return '这个是【旧网址】：没有框线，也不会自动拍。\n要自动拍：用 Safari 或 Chrome 打开这个新网址 ↓';
+    if (failWhy) return '相机打不开（' + failWhy + '），所以没有框线、不会自动拍。\n如果刚才按了「不允许」：到手机设定里允许这个网页用相机，再重新打开。';
+    if (inApp) return '你是在 WhatsApp / 其他 app 里面打开的，这里开不到即时相机（没有框线、不会自动拍）。\n请按右上角「⋯」选「用 Safari / Chrome 打开」，或者复制下面的网址，贴进 Safari / Chrome ↓';
+    return '这个浏览器开不到即时相机（没有框线、不会自动拍）。\n请复制下面的网址，用 Safari 或 Chrome 打开 ↓';
+  }
+  function applyCamUi(failWhy) {
     show('liveBtn', liveOK);
     $('camBtn').classList.toggle('small', liveOK);
     if (liveOK) $('camBtn').firstChild.nodeValue = '用手机自己的相机';
+    show('camWhy', !liveOK);
+    if (!liveOK) $('camWhyText').textContent = noLiveWhy(failWhy);
+    $('ver').textContent = 'v7.1 · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
   }
+  $('camWhyCopy').onclick = function () {
+    var done = function () { $('camWhyCopy').textContent = '✅ 复制好了，去 Safari / Chrome 贴上'; };
+    try { navigator.clipboard.writeText(NEW_ADDR).then(done, function () { prompt('长按复制这个网址：', NEW_ADDR); }); }
+    catch (e) { prompt('长按复制这个网址：', NEW_ADDR); }
+  };
   function camFail(e) {
     var n = e && e.name || '';
     var why = n === 'NotAllowedError' || n === 'SecurityError' ? '没有允许用相机' : n === 'NotFoundError' || n === 'OverconstrainedError' ? '找不到相机' : (e && e.message) || '原因不明';
-    liveOK = false; applyCamUi();
+    liveOK = false; applyCamUi(why);
     $('camBtn').firstChild.nodeValue = '📷 拍一页';
     say('相机打不开（' + why + '）。改用手机自己的相机：按「📷 拍一页」。', 'bad');
   }
