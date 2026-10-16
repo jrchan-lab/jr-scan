@@ -85,8 +85,10 @@
 
     <div id="pages" class="pages"></div>
 
-    <p>文件名字：<span class="hint">扫学生的卷，请在后面加学生名字（例如 …-陈小明）；扫书可以不改。</span></p>
+    <p>卷子 / 书的名字：<span class="hint">会记住，下一份不用再打。</span></p>
     <input id="name" type="text">
+    <p style="margin-top:10px">学生名字：<span class="hint">扫学生的卷才填，每一份换一个；扫书不用填。</span></p>
+    <input id="pupil" type="text" placeholder="例如 陈小明">
     <div class="row" style="margin-top:12px">
       <button id="make" disabled>✅ 做成 PDF，存起来</button>
     </div>
@@ -119,7 +121,8 @@
   <canvas id="camOverlay"></canvas>
   <div id="camTop">
     <button id="modeOne" class="on">一页</button>
-    <button id="modeTwo">两页（书打开）</button>
+    <button id="modeTwo">两页（书）</button>
+    <button id="autoBtn" class="on">自动拍：开</button>
   </div>
   <div id="camIssue"></div>
   <div id="camToast" class="hidden"></div>
@@ -170,7 +173,7 @@
 
   // ---------- start: PIN or straight in ----------
   function start() {
-    $('name').value = '扫描-' + stamp();
+    $('name').value = savedName() || '扫描-' + stamp();
     applyCamUi();
     if (!hasServer) { show('app', true); say('这个网页还没有连上 Google（服务器地址没填）。\n可以先拍照、做 PDF，但 PDF 只会下载到这台机器，不会存到 Drive。', 'bad'); return; }
     try { pinValue = localStorage.getItem('jrScanPin') || ''; } catch (e) {}
@@ -374,7 +377,7 @@
     return { g: g, w: w, h: h };
   }
   function pct(a, q) { var b = Array.prototype.slice.call(a).sort(function (x, y) { return x - y; }); return b[Math.min(b.length - 1, Math.floor(q * b.length))]; }
-  function checkPhoto(c) {
+  function checkPhoto(c, blurMin) {
     var issues = [], A = grey(c, 500), cells = [];
     var y0 = Math.floor(A.h * 0.15), y1 = Math.floor(A.h * 0.85), x0 = Math.floor(A.w * 0.15), x1 = Math.floor(A.w * 0.85);
     for (var i = 0; i < 6; i++) for (var j = 0; j < 6; j++) {
@@ -391,11 +394,11 @@
       var k = y * B.w + x; hist[Math.min(1023, Math.round(Math.abs(B.g[k - 1] + B.g[k + 1] + B.g[k - B.w] + B.g[k + B.w] - 4 * B.g[k])))]++; n++;
     }
     var top = 0, e = 1023; while (e > 0 && top + hist[e] <= 0.005 * n) { top += hist[e]; e--; }
-    if (e < 40) issues.push('糊了');      // real photos 81-300+, a blurred one 14
+    if (e < (blurMin || 40)) issues.push('糊了');      // real photos 81-300+, a blurred one 14; a saved photo uses SHARP_MIN (75), the live view 40
     return issues;
   }
   function addCanvas(c) {
-    var issues = checkPhoto(c), before = pages.length;
+    var issues = checkPhoto(c, SHARP_MIN), before = pages.length;
     return process(c).then(function (k) {
       if (issues.length) {
         for (var i = before; i < pages.length; i++) pages[i].warn = issues.join('、');
@@ -549,7 +552,10 @@
     });
   }
   $('enhance').onchange = drawPages;
-  $('clear').onclick = function () { if (confirm('全部清掉？')) { pages = []; drawPages(); $('links').innerHTML = ''; say('已经清掉。'); $('name').value = '扫描-' + stamp(); } };
+  $('clear').onclick = function () { if (confirm('全部清掉？')) { pages = []; drawPages(); $('links').innerHTML = ''; say('已经清掉。'); $('name').value = savedName() || '扫描-' + stamp(); $('pupil').value = ''; } };
+  // 16-Oct JR: 「名字能不能自动命名」. The paper / book name is remembered on this phone; only the pupil's name is typed each time.
+  // (A pupil's handwritten name is not read automatically: a wrong guess would file one child's script under another child.)
+  function savedName() { try { return localStorage.getItem('jrScanName') || ''; } catch (e) { return ''; } }
 
   // ---------- build the two PDFs ----------
   function fit(doc, r, x, y, w, h, margin) {
@@ -579,7 +585,9 @@
   }
   $('make').onclick = function () {
     if (!pages.length) return;
-    var base = ($('name').value.trim() || '扫描-' + stamp()).replace(/[\\\/:*?"<>|]/g, '-');
+    var nm = $('name').value.trim(), pu = $('pupil').value.trim();
+    if (nm && !/^扫描-\d{8}-\d{6}$/.test(nm)) { try { localStorage.setItem('jrScanName', nm); } catch (e) {} }
+    var base = ((nm || '扫描-' + stamp()) + (pu ? '-' + pu : '')).replace(/[\\\/:*?"<>|]/g, '-');
     $('make').disabled = true; $('links').innerHTML = '';
     say('做 PDF 中……（' + pages.length + ' 页）');
     queue.then(function () {
@@ -611,6 +619,7 @@
   var GREEN = '#5fbf77', ORANGE = '#f0a030', HOLD_MS = 1500;   // 16-Oct JR: 1200 felt too fast
   var REARM_MS = 800;        // after a snap, 'not ready' must last this long (the hand turning the page) before the next auto snap
   var camPaper = null, camNotGreenSince = 0, paperGrab = document.createElement('canvas');
+  var camAuto = true, camRetries = 0, SHARP_MIN = 75;        // 16-Oct JR: 「没有准备好…怎样停」: 自动拍 关 = only the round button takes a picture
 
   // 16-Oct: JR saw no frame and no auto-snap, and the page never said why. Without the live camera, say so on the page,
   // name the likely cause (old Google address / opened inside WhatsApp etc. / camera refused) and give the address to open.
@@ -628,7 +637,7 @@
     if (liveOK) $('camBtn').firstChild.nodeValue = '用手机自己的相机';
     show('camWhy', !liveOK);
     if (!liveOK) $('camWhyText').textContent = noLiveWhy(failWhy);
-    $('ver').textContent = 'v7.2 · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
+    $('ver').textContent = 'v7.3 · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
   }
   $('camWhyCopy').onclick = function () {
     var done = function () { $('camWhyCopy').textContent = '✅ 复制好了，去 Safari / Chrome 贴上'; };
@@ -777,7 +786,7 @@
       else if (!camNotGreenSince) camNotGreenSince = now;
       if (camNotGreenSince && now - camNotGreenSince >= REARM_MS) camArmed = true;   // a short wobble on the same page does not re-arm
     } else { camNotGreenSince = 0; if (!camGreenSince) camGreenSince = now; }
-    if (green && camArmed && now - camGreenSince >= HOLD_MS && now - camLastSnap > 1500) snap();
+    if (camAuto && green && camArmed && now - camGreenSince >= HOLD_MS && now - camLastSnap > 1500) snap();
 
     var f = frameRect(W, H), col = green ? GREEN : ORANGE;
     g.fillStyle = 'rgba(0,0,0,.38)'; g.beginPath(); g.rect(0, 0, W, H); g.rect(f.x, f.y, f.w, f.h); g.fill('evenodd');
@@ -785,7 +794,7 @@
     if (camMode === 'two') {
       g.lineWidth = 3; g.setLineDash([14, 10]); g.beginPath(); g.moveTo(f.x, f.y + f.h / 2); g.lineTo(f.x + f.w, f.y + f.h / 2); g.stroke(); g.setLineDash([]);
     }
-    if (green && camArmed && camGreenSince) {       // hold-still progress along the bottom edge of the frame
+    if (camAuto && green && camArmed && camGreenSince) {       // hold-still progress along the bottom edge of the frame
       g.fillStyle = GREEN; g.fillRect(f.x, f.y + f.h + 6, f.w * Math.min(1, (now - camGreenSince) / HOLD_MS), 6);
     }
     if (lv) {                           // the level: dot centred = phone flat
@@ -802,6 +811,7 @@
     if (fresh && !paperOk) msg = '把整张纸放进框里';
     else if (issues.length) msg = issues.join('　');
     else if (fresh && !steadyNow) msg = '拿稳';
+    else if (green && !camAuto) { msg = '可以拍了，按圆钮'; good = true; }
     else if (green && camArmed) { msg = '稳住，马上拍'; good = true; }
     else if (green) { msg = '翻下一页'; good = true; }
     if (txt.textContent !== msg) txt.textContent = msg;
@@ -816,15 +826,36 @@
     return c;
   }
   function takeHi(frame, vw, vh) {      // a real still photo is sharper than a video frame; use it only if it arrives fast and has the same orientation
+    // 16-Oct, JR's first real script: 3 of 6 photos were shaken (the still arrives later than the green frame; the hand had moved), and the
+    // still showed MORE than the frame (a 3:4 photo vs the narrower video). So: trim the still to the video's shape, then keep it only if it is
+    // about as sharp as the video frame that passed the check.
     return new Promise(function (ok) {
       var done = false, fin = function (c) { if (!done) { done = true; ok(c); } };
       setTimeout(function () { fin(frame); }, 3000);
       try {
         new ImageCapture(camTrack).takePhoto().then(fileToCanvas).then(function (c) {
-          fin(((c.height >= c.width) === (vh >= vw)) && c.width * c.height >= frame.width * frame.height ? c : frame);
+          if ((c.height >= c.width) !== (vh >= vw)) return fin(frame);
+          c = trimTo(c, vw / vh);
+          if (c.width * c.height < frame.width * frame.height) return fin(frame);
+          fin(sharpness(c) >= 0.7 * sharpness(frame) ? c : frame);
         }).catch(function () { fin(frame); });
       } catch (e) { fin(frame); }
     });
+  }
+  function trimTo(c, aspect) {          // centre-cut a canvas to width/height = aspect (the video's view)
+    var w = c.width, h = c.height, tw = w, th = h;
+    if (w / h > aspect * 1.02) tw = Math.round(h * aspect); else if (w / h < aspect / 1.02) th = Math.round(w / aspect); else return c;
+    var o = document.createElement('canvas'); o.width = tw; o.height = th;
+    o.getContext('2d').drawImage(c, (w - tw) / 2, (h - th) / 2, tw, th, 0, 0, tw, th);
+    return o;
+  }
+  function sharpness(c) {               // the strongest 0.5 % of edges at 1000 px: the same measure checkPhoto() uses for '糊了'
+    var B = grey(c, 1000), hist = new Uint32Array(1024), n = 0;
+    for (var y = Math.floor(B.h * 0.2); y < Math.floor(B.h * 0.8); y++) for (var x = Math.floor(B.w * 0.2); x < Math.floor(B.w * 0.8); x++) {
+      var k = y * B.w + x; hist[Math.min(1023, Math.round(Math.abs(B.g[k - 1] + B.g[k + 1] + B.g[k - B.w] + B.g[k + B.w] - 4 * B.g[k])))]++; n++;
+    }
+    var top = 0, e = 1023; while (e > 0 && top + hist[e] <= 0.005 * n) { top += hist[e]; e--; }
+    return e;
   }
   function flash() {
     var f = $('camFlash'); f.style.transition = 'none'; f.style.opacity = '0.85'; void f.offsetWidth;
@@ -839,6 +870,9 @@
     var vw = v.videoWidth, vh = v.videoHeight, frame = scaleTo(v, vw, vh);
     var got = (camTrack && window.ImageCapture) ? takeHi(frame, vw, vh) : Promise.resolve(frame);
     got.then(function (c) {
+      // 16-Oct, JR's first real script: shaken photos scored 63-71, readable ones 94+ (all 41 earlier real photos 122+). Retake, twice at most.
+      if (sharpness(c) < SHARP_MIN && camRetries < 2) { camRetries++; camArmed = true; camToast('糊了，没有存。拿稳，再拍一次。'); return; }
+      camRetries = 0;
       camPending++; camCount();
       queue = queue.then(function () { return addCanvas(c); }).then(function () {
         camPending--; camCount();
@@ -854,6 +888,10 @@
   $('camDone').onclick = closeCamera;
   $('modeOne').onclick = function () { setMode('one'); };
   $('modeTwo').onclick = function () { setMode('two'); };
+  $('autoBtn').onclick = function () {
+    camAuto = !camAuto; camGreenSince = 0;
+    $('autoBtn').classList.toggle('on', camAuto); $('autoBtn').textContent = camAuto ? '自动拍：开' : '自动拍：关';
+  };
 
   // Test hooks for the local check only (add a picture without the camera).
   window.__jrScanAddCanvas = function (c) { return enqueue(function () { return addCanvas(c); }); };
