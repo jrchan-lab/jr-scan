@@ -43,18 +43,21 @@
   .cam video, .cam canvas { position:absolute; left:0; top:0; width:100%; height:100%; }
   .cam video { object-fit:contain; background:#000; }
   .cam canvas { pointer-events:none; }
-  #camTop { position:absolute; left:0; right:0; top:0; display:flex; gap:8px; padding:12px; padding-top:max(12px, env(safe-area-inset-top)); }
-  #camTop button { padding:12px 6px; font-size:18px; background:rgba(20,24,29,.78); color:var(--ink); border:1px solid #39424d; }
-  #camTop button.on { background:var(--accent); color:#14181d; border-color:var(--accent); }
-  #camIssue { position:absolute; left:0; right:0; top:84px; text-align:center; font-size:34px; font-weight:800; color:var(--bad); text-shadow:0 2px 8px #000, 0 0 3px #000; pointer-events:none; padding:0 70px 0 12px; }
-  #camIssue.good { color:var(--ok); }
+  /* 17-Oct JR: smaller words, never over the frame; colour = state only (blackboard palette: #7fd3a0 ready, #ef7d7d not ready) */
+  .cam { --camOk:#7fd3a0; --camBad:#ef7d7d; font-family:"Source Sans 3","Noto Sans SC",system-ui,sans-serif; }
+  #camTop { position:absolute; left:0; right:0; top:0; display:flex; gap:6px; padding:8px 10px; padding-top:max(8px, env(safe-area-inset-top)); background:rgba(20,35,29,.82); }
+  #camTop button { padding:7px 4px; font-size:15px; font-weight:600; background:#1b2f27; color:#f0efe6; border:1px solid #2f4a3e; border-radius:9px; }
+  #camTop button.on { background:#f3d25a; color:#14231d; border-color:#f3d25a; }
+  #camStatus { position:absolute; left:10px; right:58px; top:calc(max(8px, env(safe-area-inset-top)) + 50px); height:34px; display:flex; align-items:center; gap:8px; padding:0 12px; border-radius:17px;
+    background:rgba(20,35,29,.86); border:2px solid var(--camBad); color:#f0efe6; font-size:16px; font-weight:600; pointer-events:none; white-space:nowrap; overflow:hidden; }
+  #camStatus i { flex:0 0 auto; width:10px; height:10px; border-radius:50%; background:var(--camBad); }
+  #camStatus.ok { border-color:var(--camOk); } #camStatus.ok i { background:var(--camOk); }
   #camBottom { position:absolute; left:0; right:0; bottom:0; display:flex; align-items:center; gap:10px; padding:14px; padding-bottom:max(14px, env(safe-area-inset-bottom)); background:linear-gradient(transparent, rgba(0,0,0,.65)); }
   #camBottom .side { flex:1; display:flex; }
   #camBottom .side.r { justify-content:flex-end; }
   #camDone { flex:0 0 auto; padding:14px 22px; background:rgba(20,24,29,.85); color:var(--ink); border:1px solid #39424d; }
   #camShot { flex:0 0 auto; width:84px; height:84px; padding:0; border-radius:50%; border:6px solid #fff; background:var(--accent); }
   #camCount { color:#fff; font-size:20px; font-weight:700; text-shadow:0 1px 4px #000; }
-  #camToast { position:absolute; left:12px; right:12px; bottom:128px; text-align:center; color:#fff; font-size:20px; background:rgba(228,106,95,.92); border-radius:10px; padding:10px; pointer-events:none; }
   #camFlash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; }
 </style>
 </head>
@@ -124,8 +127,7 @@
     <button id="modeTwo">两页（书）</button>
     <button id="autoBtn" class="on">自动拍：开</button>
   </div>
-  <div id="camIssue"></div>
-  <div id="camToast" class="hidden"></div>
+  <div id="camStatus"><i></i><span id="camStatusText"></span></div>
   <div id="camFlash"></div>
   <div id="camBottom">
     <div class="side"><button id="camDone">完成</button></div>
@@ -616,7 +618,9 @@
   var camIssues = null, camIssuesAt = 0, camGreenSince = 0, camArmed = true, camSnapping = false, camLastSnap = 0, camPending = 0;
   var tilt = null, tiltLog = [], orientOn = false, orientRefused = false;
   var camGrab = document.createElement('canvas');
-  var GREEN = '#5fbf77', ORANGE = '#f0a030', HOLD_MS = 1500;   // 16-Oct JR: 1200 felt too fast
+  var GREEN = '#7fd3a0', RED = '#ef7d7d', HOLD_MS = 1500;
+  var camFrame = null;       // 17-Oct: the guide frame as fractions of the video (it now fits between the bars); frameInVideo() uses the same box
+  var camToastText = '', camToastUntil = 0, camLocked = false;   // 16-Oct JR: 1200 felt too fast
   var REARM_MS = 800;        // after a snap, 'not ready' must last this long (the hand turning the page) before the next auto snap
   var camPaper = null, camNotGreenSince = 0, paperGrab = document.createElement('canvas');
   var camAuto = true, camRetries = 0, SHARP_MIN = 75;        // 16-Oct JR: 「没有准备好…怎样停」: 自动拍 关 = only the round button takes a picture
@@ -637,7 +641,7 @@
     if (liveOK) $('camBtn').firstChild.nodeValue = '用手机自己的相机';
     show('camWhy', !liveOK);
     if (!liveOK) $('camWhyText').textContent = noLiveWhy(failWhy);
-    $('ver').textContent = 'v7.3 · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
+    $('ver').textContent = 'v7.4 · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
   }
   $('camWhyCopy').onclick = function () {
     var done = function () { $('camWhyCopy').textContent = '✅ 复制好了，去 Safari / Chrome 贴上'; };
@@ -686,6 +690,13 @@
     var perm = null;       // iOS: the permission question must be asked straight from the tap
     try { if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') perm = DeviceOrientationEvent.requestPermission(); } catch (e) { perm = null; }
     say('打开相机中……');
+    camLocked = false; camFrame = null;
+    try {   // 17-Oct JR: the screen must not turn with the phone. Locking needs fullscreen (Android Chrome); asked from the tap.
+      var el = document.documentElement, fs = el.requestFullscreen ? el.requestFullscreen({ navigationUI: 'hide' }) : null;
+      Promise.resolve(fs).then(function () {
+        if (screen.orientation && screen.orientation.lock) return screen.orientation.lock('portrait').then(function () { camLocked = true; });
+      }).catch(function () {});
+    } catch (e) {}
     getStream().then(function (stream) {
       camStream = stream; camTrack = stream.getVideoTracks()[0];
       camTrack.addEventListener('ended', function () { if (camStream) { closeCamera(); say('相机停了，请再按一次「📷 开相机拍」。', 'bad'); } });
@@ -708,13 +719,13 @@
     camStream = camTrack = null;
     $('camVideo').srcObject = null;
     show('camLayer', false); document.body.style.overflow = '';
+    try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
+    try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {}); } catch (e) {}
+    camLocked = false;
     enqueue(function () { if (!pages.some(function (p) { return p.warn; })) say('现在有 ' + pages.length + ' 页。'); });
   }
   function camCount() { $('camCount').textContent = '已拍 ' + (pages.length + camPending) + ' 页'; }
-  function camToast(text) {
-    var t = $('camToast'); t.textContent = text; show('camToast', true);
-    clearTimeout(camToast.h); camToast.h = setTimeout(function () { show('camToast', false); }, 3500);
-  }
+  function camToast(text) { camToastText = text; camToastUntil = Date.now() + 3000; }
 
   // 16-Oct JR test: the auto snap took the keyboard and the empty table, because checkPhoto() only asks bright / sharp / no deep shadow.
   // paperIn(): is a sheet with words filling the guide frame? Cut the frame out of the video, 300 px wide, 6 x 8 cells. A cell is PAPER when its
@@ -742,6 +753,7 @@
     return { white: white / n, ink: ink / n, ok: white / n >= 0.7 && ink / n >= 0.15 };
   }
   function frameInVideo(vw, vh) {   // the same box as frameRect(), in video pixels
+    if (camFrame) return { x: camFrame.x * vw, y: camFrame.y * vh, w: camFrame.w * vw, h: camFrame.h * vh };
     var fh = vh * 0.88, fw = fh / 1.414;
     if (fw > vw * 0.88) { fw = vw * 0.88; fh = fw * 1.414; }
     return { x: (vw - fw) / 2, y: (vh - fh) / 2, w: fw, h: fh };
@@ -764,10 +776,15 @@
   function frameRect(W, H) {
     var v = $('camVideo'), vw = v.videoWidth || W, vh = v.videoHeight || H, k = Math.min(W / vw, H / vh);
     var rw = vw * k, rh = vh * k, rx = (W - rw) / 2, ry = (H - rh) / 2;
-    var fh = rh * 0.88, fw = fh / 1.414;
+    // 17-Oct JR: the words must never sit on the frame lines, so the frame fits between the status bar and the bottom buttons
+    var st = $('camStatus'), bt = $('camBottom');
+    var top = Math.max(ry, st.offsetTop + st.offsetHeight + 10), bot = Math.min(ry + rh, bt.offsetTop - 16);
+    var fh = Math.min(rh * 0.88, Math.max(80, bot - top)), fw = fh / 1.414;
     if (fw > rw * 0.88) { fw = rw * 0.88; fh = fw * 1.414; }
     // one page: A4 upright. two pages: the open book lies sideways on the portrait screen, so the same tall shape, spine across the middle.
-    return { x: rx + (rw - fw) / 2, y: ry + (rh - fh) / 2, w: fw, h: fh };
+    var x = rx + (rw - fw) / 2, y = top + (bot - top - fh) / 2;
+    if (rw > 0 && rh > 0) camFrame = { x: (x - rx) / rw, y: (y - ry) / rh, w: fw / rw, h: fh / rh };
+    return { x: x, y: y, w: fw, h: fh };
   }
   function camDraw() {
     camRaf = requestAnimationFrame(camDraw);
@@ -779,7 +796,8 @@
     var lv = levelState(), fresh = !!camIssues && now - camIssuesAt < 1500;
     var issues = fresh ? camIssues : [], steadyNow = steady(now);
     var paperOk = !!(camPaper && camPaper.ok);
-    var green = fresh && paperOk && !issues.length && (!lv || lv.ok) && steadyNow && !camSnapping;
+    var sideways = !camLocked && W > H;     // a phone that cannot lock the screen (iPhone) and is held sideways
+    var green = fresh && paperOk && !sideways && !issues.length && (!lv || lv.ok) && steadyNow && !camSnapping;
     if (!green) {
       camGreenSince = 0;
       if (camSnapping) camNotGreenSince = 0;                       // saving the photo is not 'turning the page'
@@ -788,7 +806,7 @@
     } else { camNotGreenSince = 0; if (!camGreenSince) camGreenSince = now; }
     if (camAuto && green && camArmed && now - camGreenSince >= HOLD_MS && now - camLastSnap > 1500) snap();
 
-    var f = frameRect(W, H), col = green ? GREEN : ORANGE;
+    var f = frameRect(W, H), col = green ? GREEN : RED;
     g.fillStyle = 'rgba(0,0,0,.38)'; g.beginPath(); g.rect(0, 0, W, H); g.rect(f.x, f.y, f.w, f.h); g.fill('evenodd');
     g.lineWidth = 5; g.strokeStyle = col; g.setLineDash([]); g.strokeRect(f.x, f.y, f.w, f.h);
     if (camMode === 'two') {
@@ -798,24 +816,28 @@
       g.fillStyle = GREEN; g.fillRect(f.x, f.y + f.h + 6, f.w * Math.min(1, (now - camGreenSince) / HOLD_MS), 6);
     }
     if (lv) {                           // the level: dot centred = phone flat
-      var R = 36, cx = W - 52, cy = 150, lim = R - 9, c5 = lim * 5 / 20;
+      var stb = $('camStatus'), R = 17, cx = W - 30, cy = stb.offsetTop + stb.offsetHeight / 2, lim = R - 5, c5 = lim * 5 / 20;
       var dx = Math.max(-1, Math.min(1, lv.gamma / 20)) * lim, dy = Math.max(-1, Math.min(1, lv.beta / 20)) * lim;
       g.fillStyle = 'rgba(0,0,0,.55)'; g.beginPath(); g.arc(cx, cy, R, 0, 6.3); g.fill();
       g.lineWidth = 2; g.strokeStyle = 'rgba(255,255,255,.8)'; g.beginPath(); g.arc(cx, cy, R, 0, 6.3); g.stroke();
       g.strokeStyle = 'rgba(255,255,255,.5)'; g.beginPath(); g.arc(cx, cy, c5, 0, 6.3); g.stroke();
       g.beginPath(); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.stroke();
-      g.fillStyle = lv.ok ? GREEN : ORANGE; g.beginPath(); g.arc(cx + dx, cy + dy, 9, 0, 6.3); g.fill();
-      if (!lv.ok) { g.font = '700 18px system-ui, sans-serif'; g.textAlign = 'center'; g.fillStyle = ORANGE; g.strokeStyle = '#000'; g.lineWidth = 4; g.strokeText('手机放平', cx, cy + R + 24); g.fillText('手机放平', cx, cy + R + 24); }
+      g.fillStyle = lv.ok ? GREEN : RED; g.beginPath(); g.arc(cx + dx, cy + dy, 5, 0, 6.3); g.fill();
     }
-    var txt = $('camIssue'), msg = '', good = false;
-    if (fresh && !paperOk) msg = '把整张纸放进框里';
-    else if (issues.length) msg = issues.join('　');
-    else if (fresh && !steadyNow) msg = '拿稳';
-    else if (green && !camAuto) { msg = '可以拍了，按圆钮'; good = true; }
-    else if (green && camArmed) { msg = '稳住，马上拍'; good = true; }
-    else if (green) { msg = '翻下一页'; good = true; }
+    var msg, good = false;
+    if (now < camToastUntil) msg = camToastText;
+    else if (sideways) msg = '手机转直';
+    else if (!fresh || !paperOk) msg = '对准纸';
+    else if (issues.length) msg = issues[0];
+    else if (lv && !lv.ok) msg = '手机放平';
+    else if (!steadyNow) msg = '拿稳';
+    else if (camSnapping) { msg = '拍了 ✓'; good = true; }
+    else if (!camAuto) { msg = '可以拍 · 按圆钮'; good = true; }
+    else if (camArmed) { msg = '可以拍'; good = true; }
+    else { msg = '拍了 ✓ 翻下一页'; good = true; }
+    var txt = $('camStatusText');
     if (txt.textContent !== msg) txt.textContent = msg;
-    txt.classList.toggle('good', good);
+    $('camStatus').classList.toggle('ok', good);
   }
 
   // ---------- take the picture: same road as a picked photo (addCanvas -> process -> pages) ----------
@@ -871,13 +893,13 @@
     var got = (camTrack && window.ImageCapture) ? takeHi(frame, vw, vh) : Promise.resolve(frame);
     got.then(function (c) {
       // 16-Oct, JR's first real script: shaken photos scored 63-71, readable ones 94+ (all 41 earlier real photos 122+). Retake, twice at most.
-      if (sharpness(c) < SHARP_MIN && camRetries < 2) { camRetries++; camArmed = true; camToast('糊了，没有存。拿稳，再拍一次。'); return; }
+      if (sharpness(c) < SHARP_MIN && camRetries < 2) { camRetries++; camArmed = true; camToast('糊了，没存 · 再拍'); return; }
       camRetries = 0;
       camPending++; camCount();
       queue = queue.then(function () { return addCanvas(c); }).then(function () {
         camPending--; camCount();
         var last = pages[pages.length - 1];
-        if (last && last.warn) camToast('⚠ 上一页' + last.warn + '。完成后可以删掉重拍。');
+        if (last && last.warn) camToast('上一页' + last.warn + ' · 可删掉重拍');
       }, function () { camPending--; camCount(); });
     }).then(function () { camSnapping = false; camLastSnap = Date.now(); camNotGreenSince = 0; });
   }
