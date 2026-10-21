@@ -146,6 +146,7 @@
   var pages = [];            // {orig: dataURL, w, h, quad: [[x,y]x4] in orig px or null, cut: dataURL|null, rot: 0..3}
   var MAX_SIDE = 2600;
   var pinValue = '';
+  var sentAt = 0, sentBase = '';   // 21-Oct: when the last save was sent, and its name, to check Drive if the reply is unreadable
   var $ = function (id) { return document.getElementById(id); };
 
   function show(id, on) { $(id).classList.toggle('hidden', !on); }
@@ -603,12 +604,30 @@
       if (!hasServer) { say('PDF 做好了，但没有连上 Google，只下载了，没有存到 Drive。', 'bad'); $('make').disabled = false; return; }
       say('存到 Google Drive 中……');
       var b64 = function (doc) { return doc.output('datauristring').split(',')[1]; };
+      sentAt = Date.now(); sentBase = base;
       return run('savePdfs', [pinValue, [{ name: n1, base64: b64(d.plain) }]]).then(function (saved) {
         saved.forEach(function (f) { var a = document.createElement('a'); a.href = f.url; a.target = '_blank'; a.textContent = '☁ 在 Drive 打开：' + f.name; $('links').appendChild(a); });
         say('存好了 ✅ 这一套完成。\n电脑大约 5 分钟后会整理好，放在 Drive「09_扫描 / 已整理」：\n「整理好.pdf」一页一张；「两页一面.pdf」拿去印（A4 横向、100%、双面、短边翻转）。', 'ok');
         $('make').disabled = false; loadRecent();
       });
-    }).catch(function (e) { say('出问题了：' + (e && e.message ? e.message : e) + '\n照片还在，可以再按一次。', 'bad'); $('make').disabled = false; });
+    }).catch(function (e) {
+      var why = '出问题了：' + (e && e.message ? e.message : e);
+      if (!sentAt) { say(why + '\n照片还在，可以再按一次。', 'bad'); $('make').disabled = false; return; }
+      // 21-Oct (JR): Google sometimes saves the file but its reply comes back unreadable; "press again" then made a second copy.
+      // So look in Drive first: this scan's name, saved since we sent it, means it IS saved.
+      say('服务器回得怪，先看看 Drive 里有没有存到……');
+      var since = sentAt - 60000; sentAt = 0;
+      run('listRecent', [pinValue]).then(function (files) {
+        var hit = (files || []).filter(function (f) { return f.t >= since && f.name.indexOf(sentBase) === 0 && /-原图\.pdf$/.test(f.name); })[0];
+        if (hit) {
+          var a = document.createElement('a'); a.href = hit.url; a.target = '_blank'; a.textContent = '☁ 在 Drive 打开：' + hit.name; $('links').appendChild(a);
+          say('存好了 ✅（服务器回得慢，但文件已经在 Drive：' + hit.name + '）\n不用再按。电脑大约 5 分钟后会整理好。', 'ok'); drawRecent(files);
+        } else {
+          say(why + '\nDrive 里也没有看到这一份。照片还在，可以再按一次。', 'bad');
+        }
+      }).catch(function () { say(why + '\n也看不到 Drive。先看下面「最近存的文件」有没有这一份，没有才再按。', 'bad'); })
+        .then(function () { $('make').disabled = false; });
+    });
   };
 
   // ---------- live camera: guide frame + level + live checks (only on a top-level HTTPS/localhost page, never inside Apps Script) ----------
@@ -641,7 +660,7 @@
     if (liveOK) $('camBtn').firstChild.nodeValue = '用手机自己的相机';
     show('camWhy', !liveOK);
     if (!liveOK) $('camWhyText').textContent = noLiveWhy(failWhy);
-    $('ver').textContent = 'v7.4 · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
+    $('ver').textContent = 'v7.5 · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
   }
   $('camWhyCopy').onclick = function () {
     var done = function () { $('camWhyCopy').textContent = '✅ 复制好了，去 Safari / Chrome 贴上'; };
