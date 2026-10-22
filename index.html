@@ -691,7 +691,7 @@
     if (liveOK) $('camBtn').firstChild.nodeValue = '用手机自己的相机';
     show('camWhy', !liveOK);
     if (!liveOK) $('camWhyText').textContent = noLiveWhy(failWhy);
-    $('ver').textContent = 'v7.5 · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
+    $('ver').textContent = 'v7.6 · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
   }
   $('camWhyCopy').onclick = function () {
     var done = function () { $('camWhyCopy').textContent = '✅ 复制好了，去 Safari / Chrome 贴上'; };
