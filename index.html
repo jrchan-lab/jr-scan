@@ -144,6 +144,7 @@
   var EXEC_URL = 'https://script.google.com/macros/s/AKfycbyxbS6gZNiC37tzVZgdoM4eJLfdWZAKOU5rGPMp-D9XRwd8DTkhQL4Braa3lYnddZ3e1A/exec';   // filled in only in the published copy (apps/scanner/publish_jr_scan.py); the address never goes into this repo
   var onGoogle = typeof google !== 'undefined' && google.script && google.script.run;
   var hasServer = !!(onGoogle || EXEC_URL);     // false = nothing to save to: the PDF is only downloaded
+  var $ = function (id) { return document.getElementById(id); };
   var pages = [];            // {orig: dataURL, w, h, quad: [[x,y]x4] in orig px or null, cut: dataURL|null, rot: 0..3}
   var pageSerial = 0, lastSavedSignature = '', lastUploadedName = '', uploadBusy = false, uploadUnknown = false;
   function uploadSignature_() {
@@ -170,7 +171,6 @@
   var MAX_SIDE = 2600;
   var pinValue = '';
   var sentAt = 0, sentBase = '';   // 21-Oct: when the last save was sent, and its name, to check Drive if the reply is unreadable
-  var $ = function (id) { return document.getElementById(id); };
 
   function show(id, on) { $(id).classList.toggle('hidden', !on); }
   function say(text, kind) { var m = $('msg'); m.textContent = text; m.className = 'msg' + (kind ? ' ' + kind : ''); }
