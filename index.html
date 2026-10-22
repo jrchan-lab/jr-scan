@@ -83,7 +83,7 @@
     </div>
     <p class="hint">拍完一页，再按「📷 拍下一页」，一直拍下去，顺序会自动排好。手机的影子会自动淡掉。拍完可以按 ✂ 调边、↻ 转方向、⬆⬇ 换顺序、✕ 删掉。</p>
 
-    <p class="hint">手机只存清楚的原图。电脑会自动切边、拉正、去影子，再做好「两页一面」给你印（大约 5 分钟后，在 Drive 的「09_扫描 / 已整理」）。</p>
+    <p class="hint">拍好后还要按「上传这份」。看到云端已上传，才代表 Drive 收到；电脑整理、小V核卷是后面的步骤，不能当作已经批改。</p>
     <span class="hidden"><input id="autocut" type="checkbox"><input id="split" type="checkbox"><input id="enhance" type="checkbox"></span>
 
     <div id="pages" class="pages"></div>
@@ -93,8 +93,9 @@
     <p style="margin-top:10px">学生名字：<span class="hint">扫学生的卷才填，每一份换一个；扫书不用填。</span></p>
     <input id="pupil" type="text" placeholder="例如 陈小明">
     <div class="row" style="margin-top:12px">
-      <button id="make" disabled>✅ 做成 PDF，存起来</button>
+      <button id="make" disabled>☁ 上传这份到 Drive</button>
     </div>
+    <p id="uploadState" class="hint" role="status" aria-live="polite">还没拍照片。</p>
     <div class="row" style="margin-top:10px">
       <button id="clear" class="ghost" disabled>🗑 全部清掉，重新开始</button>
     </div>
@@ -144,6 +145,28 @@
   var onGoogle = typeof google !== 'undefined' && google.script && google.script.run;
   var hasServer = !!(onGoogle || EXEC_URL);     // false = nothing to save to: the PDF is only downloaded
   var pages = [];            // {orig: dataURL, w, h, quad: [[x,y]x4] in orig px or null, cut: dataURL|null, rot: 0..3}
+  var pageSerial = 0, lastSavedSignature = '', lastUploadedName = '', uploadBusy = false, uploadUnknown = false;
+  function uploadSignature_() {
+    return JSON.stringify([$('name').value.trim(), $('pupil').value.trim(), pages.map(function(p) {
+      return [p.uid, p.rot, p.quad, p.cut ? p.cut.length : 0];
+    })]);
+  }
+  function uploadStateText_(count, busy, saved, name, uncertain) {
+    if (busy) return '正在制作并上传，请等云端回执，不要重复按。';
+    if (!count) return '还没拍照片。';
+    if (saved) return '云端已上传：' + name + '。电脑整理和小V核卷仍是后续步骤。';
+    if (uncertain) return '上传结果待核，照片仍保留。先查最近文件，不要重复上传。';
+    return '已拍 ' + count + ' 页，还没上传。请按「上传这份到 Drive」。';
+  }
+  function syncUploadState_() {
+    $('uploadState').textContent = uploadStateText_(pages.length, uploadBusy,
+      !!lastSavedSignature && uploadSignature_() === lastSavedSignature, lastUploadedName, uploadUnknown);
+  }
+  window.addEventListener('beforeunload', function(e) {
+    if (pages.length && uploadSignature_() !== lastSavedSignature) { e.preventDefault(); e.returnValue = ''; }
+  });
+  $('name').addEventListener('input', syncUploadState_);
+  $('pupil').addEventListener('input', syncUploadState_);
   var MAX_SIDE = 2600;
   var pinValue = '';
   var sentAt = 0, sentBase = '';   // 21-Oct: when the last save was sent, and its name, to check Drive if the reply is unreadable
@@ -365,7 +388,7 @@
     return step.then(function (out) {
       if (auto && linesRunDown(out)) out = rotate(out, 3);
       var parts = ($('split').checked && out.width > out.height * 1.15) ? splitSpread(out) : [out];
-      parts.forEach(function (p) { pages.push({ orig: p.toDataURL('image/jpeg', 0.92), w: p.width, h: p.height, quad: null, cut: null, rot: 0 }); });
+      parts.forEach(function (p) { pages.push({ uid: ++pageSerial, orig: p.toDataURL('image/jpeg', 0.92), w: p.width, h: p.height, quad: null, cut: null, rot: 0 }); });
       return parts.length;
     });
   }
@@ -538,7 +561,8 @@
   // ---------- page list ----------
   function drawPages() {
     var box = $('pages'); box.innerHTML = '';
-    $('make').disabled = $('clear').disabled = !pages.length;
+    $('make').disabled = uploadBusy || !pages.length; $('clear').disabled = uploadBusy || !pages.length;
+    syncUploadState_();
     pages.forEach(function (p, i) {
       var card = document.createElement('div'); card.className = 'page';
       var im = document.createElement('img'); card.appendChild(im);
@@ -587,13 +611,17 @@
     var a = document.createElement('a'); a.href = URL.createObjectURL(doc.output('blob')); a.download = name; a.textContent = '⬇ 下载 ' + name; return a;
   }
   $('make').onclick = function () {
-    if (!pages.length) return;
+    if (!pages.length || uploadBusy) return;
+    sentAt = 0; sentBase = '';   // never let a previous success validate this attempt
     var nm = $('name').value.trim(), pu = $('pupil').value.trim();
     if (nm && !/^扫描-\d{8}-\d{6}$/.test(nm)) { try { localStorage.setItem('jrScanName', nm); } catch (e) {} }
     var base = ((nm || '扫描-' + stamp()) + (pu ? '-' + pu : '')).replace(/[\\\/:*?"<>|]/g, '-');
+    var uploadSignature = '';
+    uploadBusy = true; uploadUnknown = false; syncUploadState_();
     $('make').disabled = true; $('links').innerHTML = '';
     say('做 PDF 中……（' + pages.length + ' 页）');
     queue.then(function () {
+      uploadSignature = uploadSignature_();
       return pages.reduce(function (p, pg) {
         return p.then(function (acc) { return render(pg, MAX_SIDE).then(function (r) { acc.push(r); return acc; }); });
       }, Promise.resolve([]));
@@ -601,18 +629,20 @@
       var d = buildPdfs(rendered);
       var n1 = base + '-原图.pdf';
       $('links').appendChild(download(d.plain, n1));
-      if (!hasServer) { say('PDF 做好了，但没有连上 Google，只下载了，没有存到 Drive。', 'bad'); $('make').disabled = false; return; }
+      if (!hasServer) { uploadBusy = false; syncUploadState_(); say('PDF 做好了，但没有连上 Google，只下载了，没有存到 Drive。', 'bad'); $('make').disabled = false; return; }
       say('存到 Google Drive 中……');
       var b64 = function (doc) { return doc.output('datauristring').split(',')[1]; };
       sentAt = Date.now(); sentBase = base;
       return run('savePdfs', [pinValue, [{ name: n1, base64: b64(d.plain) }]]).then(function (saved) {
+        if (!Array.isArray(saved) || !saved.length || saved.some(function(f) { return !f.name || !f.url; })) throw new Error('云端未返回文件回执。');
         saved.forEach(function (f) { var a = document.createElement('a'); a.href = f.url; a.target = '_blank'; a.textContent = '☁ 在 Drive 打开：' + f.name; $('links').appendChild(a); });
-        say('存好了 ✅ 这一套完成。\n电脑大约 5 分钟后会整理好，放在 Drive「09_扫描 / 已整理」：\n「整理好.pdf」一页一张；「两页一面.pdf」拿去印（A4 横向、100%、双面、短边翻转）。', 'ok');
+        lastSavedSignature = uploadSignature; lastUploadedName = saved.map(function(f) { return f.name; }).join('、'); uploadBusy = false; uploadUnknown = false; syncUploadState_();
+        say('云端已上传 ✅：' + lastUploadedName + '\n不用重复上传。下一步等待电脑同步、整理，再交小V核卷；这条提示不代表已批改。', 'ok');
         $('make').disabled = false; loadRecent();
       });
     }).catch(function (e) {
       var why = '出问题了：' + (e && e.message ? e.message : e);
-      if (!sentAt) { say(why + '\n照片还在，可以再按一次。', 'bad'); $('make').disabled = false; return; }
+      if (!sentAt) { uploadBusy = false; syncUploadState_(); say(why + '\n照片还在，尚未送到云端。', 'bad'); $('make').disabled = false; return; }
       // 21-Oct (JR): Google sometimes saves the file but its reply comes back unreadable; "press again" then made a second copy.
       // So look in Drive first: this scan's name, saved since we sent it, means it IS saved.
       say('服务器回得怪，先看看 Drive 里有没有存到……');
@@ -621,12 +651,13 @@
         var hit = (files || []).filter(function (f) { return f.t >= since && f.name.indexOf(sentBase) === 0 && /-原图\.pdf$/.test(f.name); })[0];
         if (hit) {
           var a = document.createElement('a'); a.href = hit.url; a.target = '_blank'; a.textContent = '☁ 在 Drive 打开：' + hit.name; $('links').appendChild(a);
-          say('存好了 ✅（服务器回得慢，但文件已经在 Drive：' + hit.name + '）\n不用再按。电脑大约 5 分钟后会整理好。', 'ok'); drawRecent(files);
+          lastSavedSignature = uploadSignature; lastUploadedName = hit.name; uploadBusy = false; uploadUnknown = false; syncUploadState_();
+          say('云端已上传 ✅：' + hit.name + '（服务器回复较慢）\n不用再按。电脑整理、小V核卷是后续步骤。', 'ok'); drawRecent(files);
         } else {
-          say(why + '\nDrive 里也没有看到这一份。照片还在，可以再按一次。', 'bad');
+          uploadUnknown = true; say(why + '\n暂未确认云端收到。照片还在，先刷新最近文件，不要重复上传。', 'bad');
         }
-      }).catch(function () { say(why + '\n也看不到 Drive。先看下面「最近存的文件」有没有这一份，没有才再按。', 'bad'); })
-        .then(function () { $('make').disabled = false; });
+      }).catch(function () { uploadUnknown = true; say(why + '\n暂时也查不到 Drive。照片仍保留，不要重复上传。', 'bad'); })
+        .then(function () { uploadBusy = false; syncUploadState_(); $('make').disabled = false; });
     });
   };
 
