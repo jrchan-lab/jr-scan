@@ -17,6 +17,8 @@
   button.ghost, .btn.ghost { background:var(--card); color:var(--ink); border:1px solid #39424d; }
   button:disabled { opacity:.45; }
   input[type=text], input[type=password] { width:100%; font-size:20px; padding:12px; border-radius:10px; border:1px solid #39424d; background:var(--card); color:var(--ink); }
+  select.pick { width:100%; font-size:18px; padding:12px 10px; border-radius:10px; border:1px solid #39424d; background:var(--card); color:var(--ink); }
+  .fname { word-break:break-all; }
   label.check { display:flex; align-items:center; gap:10px; margin:10px 0; color:var(--soft); }
   label.check input { width:24px; height:24px; }
   .pages { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin:14px 0; }
@@ -88,10 +90,22 @@
 
     <div id="pages" class="pages"></div>
 
-    <p>卷子 / 书的名字：<span class="hint">会记住，下一份不用再打。</span></p>
-    <input id="name" type="text">
-    <p style="margin-top:10px">学生名字：<span class="hint">扫学生的卷才填，每一份换一个；扫书不用填。</span></p>
-    <input id="pupil" type="text" placeholder="例如 陈小明">
+    <!-- 2-Nov-2026 (JR 23:0x): pick today's paper and the pupil from lists; the file name is made from them. Typing stays for books / anything not on the list. -->
+    <div id="pickBox" class="hidden">
+      <p>① 今天的卷：<span class="hint">点选就好，不用打字。</span></p>
+      <select id="paperPick" class="pick"></select>
+      <div id="whoRow">
+        <p style="margin-top:10px">② 谁的卷：<span class="hint">全班一起拍就选「多人」，电脑会认卷上的名字，晚上给你核对。</span></p>
+        <select id="whoPick" class="pick"></select>
+      </div>
+      <p id="pickName" class="hint fname"></p>
+    </div>
+    <div id="typeBox">
+      <p>卷子 / 书的名字：<span class="hint">会记住，下一份不用再打。</span></p>
+      <input id="name" type="text">
+      <p style="margin-top:10px">学生名字：<span class="hint">扫学生的卷才填，每一份换一个；扫书不用填。</span></p>
+      <input id="pupil" type="text" placeholder="例如 陈小明">
+    </div>
     <div class="row" style="margin-top:12px">
       <button id="make" disabled>☁ 上传这份到 Drive</button>
     </div>
@@ -148,7 +162,7 @@
   var pages = [];            // {orig: dataURL, w, h, quad: [[x,y]x4] in orig px or null, cut: dataURL|null, rot: 0..3}
   var pageSerial = 0, lastSavedSignature = '', lastUploadedName = '', uploadBusy = false, uploadUnknown = false;
   function uploadSignature_() {
-    return JSON.stringify([$('name').value.trim(), $('pupil').value.trim(), pages.map(function(p) {
+    return JSON.stringify([$('name').value.trim(), $('pupil').value.trim(), $('paperPick').value, $('whoPick').value, pages.map(function(p) {
       return [p.uid, p.rot, p.quad, p.cut ? p.cut.length : 0];
     })]);
   }
@@ -168,6 +182,56 @@
   });
   $('name').addEventListener('input', syncUploadState_);
   $('pupil').addEventListener('input', syncUploadState_);
+
+  // ---------- 2-Nov: today's papers + class lists (Code.gs todayPapers <- the laptop's 09_扫描/_今天的卷.json) ----------
+  // File name = <paper_id>-<回头考|小测|加练>-<pupil or 多人>-<yyyymmdd>-原图.pdf; eval/reading/intake.py reads it back (NEW_NAME).
+  var TODAY = null, MULTI = '多人', TYPE = '__type__';
+  function ymd(d) { var p = function (x) { return ('0' + x).slice(-2); }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()); }
+  function picked() { var i = $('paperPick').value; return (TODAY && i !== '' && i !== TYPE) ? TODAY.papers[+i] : null; }
+  function namesFor(cls) {
+    var out = [], parts = (cls || '').match(/[SF][1-6]/g) || [];
+    parts.forEach(function (c) { (TODAY.classes[c] || []).forEach(function (n) { if (out.indexOf(n) < 0 && !(TODAY.paused || {})[n]) out.push(n); }); });
+    return out;
+  }
+  function pickedBase() {
+    var p = picked(); if (!p) return '';
+    return (p.paper_id + '-' + p.kind + '-' + ($('whoPick').value || MULTI) + '-' + ymd(new Date())).replace(/[\\/:*?"<>|]/g, '-');
+  }
+  function drawWho() {
+    var p = picked(), w = $('whoPick'), keep = w.value;
+    show('typeBox', !TODAY || $('paperPick').value === TYPE);
+    show('whoRow', !!p);
+    w.innerHTML = '';
+    if (p) {
+      var o = document.createElement('option'); o.value = MULTI; o.textContent = '👥 多人 / 全班一起拍（电脑认名字）'; w.appendChild(o);
+      namesFor(p.cls).forEach(function (n) { var x = document.createElement('option'); x.value = n; x.textContent = n; w.appendChild(x); });
+      if (keep && [].some.call(w.options, function (x) { return x.value === keep; })) w.value = keep;
+    }
+    $('pickName').textContent = p ? '文件名：' + pickedBase() + '-原图.pdf' : '';
+    try { localStorage.setItem('jrScanPaper', p ? p.paper_id + '|' + p.kind + '|' + p.date : ''); } catch (e) {}
+    syncUploadState_();
+  }
+  function drawPapers(data) {
+    TODAY = data && data.papers && data.papers.length ? data : null;
+    show('pickBox', !!TODAY);
+    if (!TODAY) { show('typeBox', true); return; }
+    var sel = $('paperPick'); sel.innerHTML = '';
+    var first = document.createElement('option'); first.value = ''; first.textContent = '— 点这里选今天的卷 —'; sel.appendChild(first);
+    var groups = {};
+    TODAY.papers.forEach(function (p, i) {
+      var g = p.date === TODAY.date ? '今天 ' + p.date.slice(5) : '补交 · ' + p.date.slice(5) + ' 的卷';
+      if (!groups[g]) { groups[g] = document.createElement('optgroup'); groups[g].label = g; sel.appendChild(groups[g]); }
+      var o = document.createElement('option'); o.value = String(i); o.textContent = (p.cls_name || p.cls) + ' · ' + p.kind + (p.short ? ' · ' + p.short : ''); groups[g].appendChild(o);
+    });
+    var t = document.createElement('option'); t.value = TYPE; t.textContent = '✍ 不在单子上（书 / 别的卷，自己打字）'; sel.appendChild(t);
+    var last = ''; try { last = localStorage.getItem('jrScanPaper') || ''; } catch (e) {}
+    TODAY.papers.forEach(function (p, i) { if (p.paper_id + '|' + p.kind + '|' + p.date === last) sel.value = String(i); });
+    drawWho();
+  }
+  function loadToday() { if (hasServer) run('todayPapers', [pinValue]).then(drawPapers).catch(function () { drawPapers(null); }); }
+  window.__jrDrawPapers = drawPapers;   // local test only (tests/phone-375): feed a saved _今天的卷.json without Google
+  $('paperPick').addEventListener('change', drawWho);
+  $('whoPick').addEventListener('change', drawWho);
   var MAX_SIDE = 2600;
   var pinValue = '';
   var sentAt = 0, sentBase = '';   // 21-Oct: when the last save was sent, and its name, to check Drive if the reply is unreadable
@@ -208,7 +272,7 @@
       enterApp();
     }).catch(function (e) { show('app', true); say('连不上：' + e.message, 'bad'); });
   }
-  function enterApp() { show('pinBox', false); show('app', true); loadRecent(); }
+  function enterApp() { show('pinBox', false); show('app', true); loadRecent(); loadToday(); }
   $('pinGo').onclick = function () {
     pinValue = $('pin').value.trim();
     run('listRecent', [pinValue]).then(function (files) {
@@ -612,10 +676,11 @@
   }
   $('make').onclick = function () {
     if (!pages.length || uploadBusy) return;
+    if (TODAY && $('paperPick').value === '') { say('请先在「① 今天的卷」点选是哪一份（不在单子上就选最后一行，自己打字）。', 'bad'); $('paperPick').focus(); return; }
     sentAt = 0; sentBase = '';   // never let a previous success validate this attempt
     var nm = $('name').value.trim(), pu = $('pupil').value.trim();
     if (nm && !/^扫描-\d{8}-\d{6}$/.test(nm)) { try { localStorage.setItem('jrScanName', nm); } catch (e) {} }
-    var base = ((nm || '扫描-' + stamp()) + (pu ? '-' + pu : '')).replace(/[\\\/:*?"<>|]/g, '-');
+    var base = pickedBase() || ((nm || '扫描-' + stamp()) + (pu ? '-' + pu : '')).replace(/[\\\/:*?"<>|]/g, '-');
     var uploadSignature = '';
     uploadBusy = true; uploadUnknown = false; syncUploadState_();
     $('make').disabled = true; $('links').innerHTML = '';
