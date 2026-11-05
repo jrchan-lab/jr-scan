@@ -4,7 +4,7 @@
 <base target="_top">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- RELATED: apps/scanner/Code.gs (saves the PDFs to Drive), apps/scanner/README.md. v7 (15-Oct evening): ONE page, TWO homes: inside Apps Script it talks via google.script.run (camera = the phone's own camera app, because the Apps Script iframe may not use getUserMedia); on its own HTTPS address (GitHub Pages) it talks to Code.gs doPost via fetch (EXEC_URL) and gets a LIVE camera with a guide frame, a level and live checks. v4 (15-Oct): phone saves the ORIGINAL photos only; the Dell cleaner (cleaner/scan_clean.py) cuts, straightens, removes shadows and makes the 2-up. v3: fast repeat shots with the real camera, auto edge cut (OpenCV.js on demand), auto-turn, book-spread split, shadow-free clean-up, manual corner fix. -->
+<!-- v9 (5-Nov): paper + pupil picked with big buttons (grade > paper > pupil). RELATED: apps/scanner/Code.gs (saves the PDFs to Drive), apps/scanner/README.md. v7 (15-Oct evening): ONE page, TWO homes: inside Apps Script it talks via google.script.run (camera = the phone's own camera app, because the Apps Script iframe may not use getUserMedia); on its own HTTPS address (GitHub Pages) it talks to Code.gs doPost via fetch (EXEC_URL) and gets a LIVE camera with a guide frame, a level and live checks. v4 (15-Oct): phone saves the ORIGINAL photos only; the Dell cleaner (cleaner/scan_clean.py) cuts, straightens, removes shadows and makes the 2-up. v3: fast repeat shots with the real camera, auto edge cut (OpenCV.js on demand), auto-turn, book-spread split, shadow-free clean-up, manual corner fix. -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   :root { --bg:#14181d; --card:#1f252d; --ink:#f3f1ea; --soft:#a9b0b8; --accent:#e9b949; --ok:#5fbf77; --bad:#e46a5f; }
@@ -19,6 +19,16 @@
   input[type=text], input[type=password] { width:100%; font-size:20px; padding:12px; border-radius:10px; border:1px solid #39424d; background:var(--card); color:var(--ink); }
   select.pick { width:100%; font-size:18px; padding:12px 10px; border-radius:10px; border:1px solid #39424d; background:var(--card); color:var(--ink); }
   .fname { word-break:break-all; }
+  /* 5-Nov v9 (JR): pick by BIG BUTTONS, not drop-downs. grade > paper > pupil. Every button >= 56 px high, text >= 20 px. */
+  .crumb { min-height:56px; display:flex; align-items:center; padding:8px 14px; border-radius:12px; background:var(--card); border:1px solid #39424d; font-size:20px; font-weight:700; line-height:1.35; word-break:break-all; }
+  .crumb.empty { color:var(--soft); font-weight:400; }
+  .pkTitle { font-size:20px; margin:14px 0 8px; font-weight:700; }
+  .pkList { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+  .pkList .wide { grid-column:1 / -1; }
+  .pkHead { grid-column:1 / -1; font-size:18px; color:var(--accent); font-weight:700; margin-top:6px; }
+  button.pk { min-height:56px; padding:10px 12px; font-size:20px; flex:none; line-height:1.3; word-break:break-all; }
+  button.pk.on, button.pk.ghost.on { background:var(--accent); color:#14181d; border-color:var(--accent); }
+  button.pk.back { width:100%; margin-top:10px; text-align:left; }
   label.check { display:flex; align-items:center; gap:10px; margin:10px 0; color:var(--soft); }
   label.check input { width:24px; height:24px; }
   .pages { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin:14px 0; }
@@ -90,15 +100,14 @@
 
     <div id="pages" class="pages"></div>
 
-    <!-- 2-Nov-2026 (JR 23:0x): pick today's paper and the pupil from lists; the file name is made from them. Typing stays for books / anything not on the list. -->
+    <!-- 5-Nov-2026 v9 (JR): big buttons grade > paper > pupil. The two <select>s below are kept HIDDEN as the state store, so every file-name rule stays exactly as in v8. -->
     <div id="pickBox" class="hidden">
-      <p>① 今天的卷：<span class="hint">点选就好，不用打字。</span></p>
-      <select id="paperPick" class="pick"></select>
-      <div id="whoRow">
-        <p style="margin-top:10px">② 谁的卷：<span class="hint">全班一起拍就选「多人」，电脑会认卷上的名字，晚上给你核对。</span></p>
-        <select id="whoPick" class="pick"></select>
-      </div>
+      <div id="crumb" class="crumb empty"></div>
+      <button id="pkBack" type="button" class="ghost pk back hidden">&larr; 回去</button>
+      <p id="pkTitle" class="pkTitle"></p>
+      <div id="pkList" class="pkList"></div>
       <p id="pickName" class="hint fname"></p>
+      <span class="hidden"><select id="paperPick"></select><select id="whoPick"></select></span>
     </div>
     <div id="typeBox">
       <p>卷子 / 书的名字：<span class="hint">会记住，下一份不用再打。</span></p>
@@ -197,18 +206,85 @@
     var p = picked(); if (!p) return '';
     return (p.paper_id + '-' + p.kind + '-' + ($('whoPick').value || MULTI) + '-' + ymd(new Date())).replace(/[\\/:*?"<>|]/g, '-');
   }
+  // ---------- 5-Nov v9: pick by buttons. State lives in the (hidden) #paperPick / #whoPick, so pickedBase() and the file name are untouched. ----------
+  var GRADES = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'F1', 'F2', 'F3'], curGrade = '', whoChosen = false;
+  var SUBJ = { MA: '数学', SC: '科学', EN: '英文', BM: '马来文', HW: '华文', SEJ: '历史' };
+  var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function gradesOf(p) { return (p.cls || '').match(/[SF][1-6]/g) || []; }      // a joint class (五六年级 / 中二中三) shows under each of its grades
+  function gradeName(g) { return (TODAY.class_names || {})[g] || g; }
+  function dayShort(iso) { var m = /^\d{4}-(\d\d)-(\d\d)$/.exec(iso || ''); return m ? (+m[2]) + '-' + MON[+m[1] - 1] : (iso || ''); }
+  function subjectOf(p) {
+    var pre = (p.paper_id || '').split('-')[0];
+    if (p.kind === '回头考') return '';
+    if (SUBJ[pre]) return SUBJ[pre];
+    var m = /(数学|科学|英文|马来文|华文|历史|作文)/.exec(p.short || ''); return m ? m[1] : '';
+  }
+  function labelOf(p) { return (subjectOf(p) + ' ' + p.kind + ' ' + dayShort(p.date)).replace(/^ +/, ''); }
+  function extraOf(p) {     // only used when two different papers of one grade and day would get the same button text
+    var t = (p.short || '').replace(/(妈妈|晚上)/g, ' ');
+    if (subjectOf(p)) t = t.replace(subjectOf(p), ' ');
+    return (t.split(/\s+/).filter(Boolean)[0] || '').slice(0, 8);
+  }
+  function papersFor(g) {   // [{i, p, label}] : this grade, today first then the earlier days; the same paper_id + kind printed twice = one button
+    var out = [], seen = {};
+    TODAY.papers.forEach(function (p, i) {
+      if (gradesOf(p).indexOf(g) < 0) return;
+      var k = p.paper_id + '|' + p.kind + '|' + p.date; if (seen[k]) return; seen[k] = 1;
+      out.push({ i: i, p: p, label: labelOf(p) });
+    });
+    var cnt = {}; out.forEach(function (o) { var k = o.p.date + o.label; cnt[k] = (cnt[k] || 0) + 1; });
+    out.forEach(function (o) { if (cnt[o.p.date + o.label] > 1) o.label += ' · ' + (extraOf(o.p) || o.p.paper_id); });
+    return out;
+  }
+  function gradesWithPapers() { return GRADES.filter(function (g) { return TODAY.papers.some(function (p) { return gradesOf(p).indexOf(g) >= 0; }); }); }
+  function btn(text, cls, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = 'pk ' + cls; b.textContent = text; b.onclick = fn; return b; }
+  function drawPick() {
+    if (!TODAY) return;
+    var p = picked(), typing = $('paperPick').value === TYPE, list = $('pkList'), crumb = $('crumb');
+    var step = typing ? 'type' : p ? 'who' : curGrade ? 'paper' : 'grade';
+    var parts = [];
+    if (typing) parts.push('✍ 自己打字');
+    else { if (curGrade) parts.push(gradeName(curGrade)); if (p) parts.push(labelOf(p)); if (p && whoChosen) parts.push($('whoPick').value === MULTI ? '多人' : $('whoPick').value); }
+    crumb.textContent = parts.length ? parts.join(' › ') : '还没选。先按下面的年级。';
+    crumb.className = 'crumb' + (parts.length ? '' : ' empty');
+    show('pkBack', step !== 'grade');
+    $('pkTitle').textContent = { grade: '① 按年级', paper: '② 按卷', who: '③ 按谁的卷', type: '请在下面的框里打字' }[step];
+    list.innerHTML = '';
+    if (step === 'grade') {
+      gradesWithPapers().forEach(function (g) { list.appendChild(btn(gradeName(g), '', function () { curGrade = g; $('paperPick').value = ''; whoChosen = false; drawWho(); })); });
+      list.appendChild(btn('✍ 不在单子上（书 / 别的卷，自己打字）', 'ghost wide', function () { $('paperPick').value = TYPE; whoChosen = false; drawWho(); }));
+    } else if (step === 'paper') {
+      var lastHead = '';
+      papersFor(curGrade).forEach(function (o) {
+        var head = o.p.date === TODAY.date ? '今天 ' + dayShort(o.p.date) : '补交 · ' + dayShort(o.p.date) + ' 的卷';
+        if (head !== lastHead) { var h = document.createElement('div'); h.className = 'pkHead'; h.textContent = head; list.appendChild(h); lastHead = head; }
+        list.appendChild(btn(o.label, 'wide', function () { $('paperPick').value = String(o.i); $('whoPick').value = ''; whoChosen = false; drawWho(); }));
+      });
+    } else if (step === 'who') {
+      list.appendChild(btn('👥 多人（整班一起拍）', 'ghost wide' + (whoChosen && $('whoPick').value === MULTI ? ' on' : ''), function () { $('whoPick').value = MULTI; whoChosen = true; drawWho(); }));
+      namesFor(p.cls).forEach(function (n) {
+        list.appendChild(btn(n, 'ghost' + (whoChosen && $('whoPick').value === n ? ' on' : ''), function () { $('whoPick').value = n; whoChosen = true; drawWho(); }));
+      });
+    }
+  }
+  $('pkBack').onclick = function () {
+    if ($('paperPick').value === TYPE) { $('paperPick').value = ''; curGrade = ''; }
+    else if (picked()) { $('paperPick').value = ''; $('whoPick').value = ''; whoChosen = false; }
+    else curGrade = '';
+    drawWho();
+  };
   function drawWho() {
     var p = picked(), w = $('whoPick'), keep = w.value;
     show('typeBox', !TODAY || $('paperPick').value === TYPE);
-    show('whoRow', !!p);
     w.innerHTML = '';
     if (p) {
-      var o = document.createElement('option'); o.value = MULTI; o.textContent = '👥 多人 / 全班一起拍（电脑认名字）'; w.appendChild(o);
+      var o = document.createElement('option'); o.value = MULTI; o.textContent = '多人'; w.appendChild(o);
       namesFor(p.cls).forEach(function (n) { var x = document.createElement('option'); x.value = n; x.textContent = n; w.appendChild(x); });
       if (keep && [].some.call(w.options, function (x) { return x.value === keep; })) w.value = keep;
     }
-    $('pickName').textContent = p ? '文件名：' + pickedBase() + '-原图.pdf' : '';
+    $('pickName').textContent = (p && whoChosen) ? '文件名：' + pickedBase() + '-原图.pdf' : '';
     try { localStorage.setItem('jrScanPaper', p ? p.paper_id + '|' + p.kind + '|' + p.date : ''); } catch (e) {}
+    drawPick();
     syncUploadState_();
   }
   function drawPapers(data) {
@@ -216,22 +292,16 @@
     show('pickBox', !!TODAY);
     if (!TODAY) { show('typeBox', true); return; }
     var sel = $('paperPick'); sel.innerHTML = '';
-    var first = document.createElement('option'); first.value = ''; first.textContent = '— 点这里选今天的卷 —'; sel.appendChild(first);
-    var groups = {};
-    TODAY.papers.forEach(function (p, i) {
-      var g = p.date === TODAY.date ? '今天 ' + p.date.slice(5) : '补交 · ' + p.date.slice(5) + ' 的卷';
-      if (!groups[g]) { groups[g] = document.createElement('optgroup'); groups[g].label = g; sel.appendChild(groups[g]); }
-      var o = document.createElement('option'); o.value = String(i); o.textContent = (p.cls_name || p.cls) + ' · ' + p.kind + (p.short ? ' · ' + p.short : ''); groups[g].appendChild(o);
-    });
-    var t = document.createElement('option'); t.value = TYPE; t.textContent = '✍ 不在单子上（书 / 别的卷，自己打字）'; sel.appendChild(t);
+    var first = document.createElement('option'); first.value = ''; first.textContent = '-'; sel.appendChild(first);
+    TODAY.papers.forEach(function (p, i) { var o = document.createElement('option'); o.value = String(i); o.textContent = (p.cls_name || p.cls) + ' · ' + p.kind + (p.short ? ' · ' + p.short : ''); sel.appendChild(o); });
+    var t = document.createElement('option'); t.value = TYPE; t.textContent = 'type'; sel.appendChild(t);
+    curGrade = ''; whoChosen = false;
     var last = ''; try { last = localStorage.getItem('jrScanPaper') || ''; } catch (e) {}
-    TODAY.papers.forEach(function (p, i) { if (p.paper_id + '|' + p.kind + '|' + p.date === last) sel.value = String(i); });
+    TODAY.papers.forEach(function (p, i) { if (last && p.paper_id + '|' + p.kind + '|' + p.date === last && gradesOf(p).length) { sel.value = String(i); curGrade = gradesOf(p)[0]; } });
     drawWho();
   }
   function loadToday() { if (hasServer) run('todayPapers', [pinValue]).then(drawPapers).catch(function () { drawPapers(null); }); }
   window.__jrDrawPapers = drawPapers;   // local test only (tests/phone-375): feed a saved _今天的卷.json without Google
-  $('paperPick').addEventListener('change', drawWho);
-  $('whoPick').addEventListener('change', drawWho);
   var MAX_SIDE = 2600;
   var pinValue = '';
   var sentAt = 0, sentBase = '';   // 21-Oct: when the last save was sent, and its name, to check Drive if the reply is unreadable
@@ -676,7 +746,8 @@
   }
   $('make').onclick = function () {
     if (!pages.length || uploadBusy) return;
-    if (TODAY && $('paperPick').value === '') { say('请先在「① 今天的卷」点选是哪一份（不在单子上就选最后一行，自己打字）。', 'bad'); $('paperPick').focus(); return; }
+    if (TODAY && $('paperPick').value === '') { say('请先按「年级」→「卷」→「谁的卷」（不在单子上就按「✍ 不在单子上」，自己打字）。', 'bad'); $('pickBox').scrollIntoView(); return; }
+    if (picked() && !whoChosen) { say('请按一下是谁的卷（全班一起拍就按「多人」）。', 'bad'); $('pickBox').scrollIntoView(); return; }
     sentAt = 0; sentBase = '';   // never let a previous success validate this attempt
     var nm = $('name').value.trim(), pu = $('pupil').value.trim();
     if (nm && !/^扫描-\d{8}-\d{6}$/.test(nm)) { try { localStorage.setItem('jrScanName', nm); } catch (e) {} }
