@@ -71,6 +71,13 @@
   #camShot { flex:0 0 auto; width:84px; height:84px; padding:0; border-radius:50%; border:6px solid #fff; background:var(--accent); }
   #camCount { color:#fff; font-size:20px; font-weight:700; text-shadow:0 1px 4px #000; }
   #camFlash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; }
+  /* 12-Nov v10: up-to-where */
+  #progLayer { position:fixed; inset:0; z-index:60; background:var(--bg); overflow:auto; padding:14px 16px 40px; }
+  #progOpen { width:100%; margin:0 0 12px; font-size:24px; padding:20px 18px; flex:none; }
+  .pgOk { margin:10px 0; padding:14px; border-radius:12px; border:2px solid var(--ok); font-size:20px; font-weight:700; line-height:1.4; }
+  button.pk.face { word-break:normal; overflow-wrap:anywhere; display:flex; flex-direction:column; align-items:stretch; gap:6px; text-align:left; }
+  button.pk.face img { width:100%; height:auto; border-radius:6px; background:#fff; }
+  button.pk.go { background:var(--ok); color:#14181d; }
 </style>
 </head>
 <body>
@@ -84,6 +91,14 @@
   </section>
 
   <section id="app" class="hidden">
+    <button id="progOpen" type="button" class="hidden">📍 上到哪里</button>
+    <div id="progLayer" class="hidden">
+      <div id="progCrumb" class="crumb empty"></div>
+      <button id="progBack" type="button" class="ghost pk back">&larr; 回去</button>
+      <p id="progTitle" class="pkTitle"></p>
+      <div id="progMsg" class="pgOk hidden"></div>
+      <div id="progList" class="pkList"></div>
+    </div>
     <div class="row">
       <button id="liveBtn" class="big hidden">📷 开相机拍</button>
       <label class="btn" id="camBtn">📷 拍一页<input id="cam" type="file" accept="image/*" capture="environment" class="hidden"></label>
@@ -289,7 +304,7 @@
   }
   function drawPapers(data) {
     TODAY = data && data.papers && data.papers.length ? data : null;
-    show('pickBox', !!TODAY);
+    show('pickBox', !!TODAY); show('progOpen', !!TODAY);
     if (!TODAY) { show('typeBox', true); return; }
     var sel = $('paperPick'); sel.innerHTML = '';
     var first = document.createElement('option'); first.value = ''; first.textContent = '-'; sel.appendChild(first);
@@ -300,6 +315,76 @@
     TODAY.papers.forEach(function (p, i) { if (last && p.paper_id + '|' + p.kind + '|' + p.date === last && gradesOf(p).length) { sel.value = String(i); curGrade = gradesOf(p)[0]; } });
     drawWho();
   }
+  // ---------- 12-Nov v10: up-to-where (grade > main paper > face > quiz > save). Writes only through saveProgress(); never touches the file-name state above. ----------
+  var pg = { on: false, step: 'grade', grade: '', pi: -1, face: 0, quiz: '', done: '' }, faceImgs = {};
+  var QUIZ = ['小测做了', '小测没做', '全部做完'], QUIZ_VAL = { '小测做了': '做了', '小测没做': '没做', '全部做完': '全部做完' };
+  function mainPapers(g) { return papersFor(g).filter(function (o) { return o.p.kind !== '回头考' && o.p.faces && o.p.faces.length; }); }
+  function progGrades() { return GRADES.filter(function (g) { return mainPapers(g).length; }); }
+  function progPaper() { return pg.pi >= 0 ? TODAY.papers[pg.pi] : null; }
+  function progFace() { var p = progPaper(); return p ? p.faces.filter(function (f) { return f.n === pg.face; })[0] : null; }
+  function paperName(p) {   // for the 「记好了」 line only: subject + the first word after it, e.g. 历史 Bab1 · 科学 第2课 科学室规则
+    var sub = subjectOf(p), t = p.short || '', k = sub ? t.indexOf(sub) : -1;
+    var rest = (k >= 0 ? t.slice(k + sub.length) : t).replace(/^[（(][^）)]*[）)]/, '').trim(), tok = rest.split(/\s+/).filter(Boolean);
+    var name = (tok[0] || '').replace(/第\d+堂.*$/, '');
+    if (/^第\d+课$/.test(name) && tok[1]) name += ' ' + tok[1];
+    return (sub + ' ' + name.slice(0, 14)).trim();
+  }
+  function drawProg() {
+    if (!TODAY) return;
+    var list = $('progList'), p = progPaper(), f = progFace(), parts = [], h;
+    if (pg.grade) parts.push(gradeName(pg.grade)); if (p) parts.push(labelOf(p)); if (f) parts.push('面 ' + f.n); if (pg.quiz) parts.push(pg.quiz);
+    $('progCrumb').textContent = parts.length ? parts.join(' › ') : '📍 上到哪里：先按年级。';
+    $('progCrumb').className = 'crumb' + (parts.length ? '' : ' empty');
+    $('progTitle').textContent = { grade: '① 按年级', paper: '② 按卷（今天 + 前 6 天的主卷）', face: '③ 按做到的那一面', quiz: '④ 小测呢？' }[pg.step];
+    $('progMsg').textContent = pg.done; show('progMsg', !!pg.done && pg.step === 'grade');
+    list.innerHTML = '';
+    if (pg.step === 'grade') {
+      progGrades().forEach(function (g) { list.appendChild(btn(gradeName(g), '', function () { pg.grade = g; pg.step = 'paper'; pg.done = ''; drawProg(); })); });
+      if (!progGrades().length) { h = document.createElement('div'); h.className = 'pkHead'; h.textContent = '单子里还没有每一面的名单（电脑还没更新）。'; list.appendChild(h); }
+    } else if (pg.step === 'paper') {
+      var last = '';
+      mainPapers(pg.grade).forEach(function (o) {
+        var head = o.p.date === TODAY.date ? '今天 ' + dayShort(o.p.date) : dayShort(o.p.date) + ' 的卷';
+        if (head !== last) { h = document.createElement('div'); h.className = 'pkHead'; h.textContent = head; list.appendChild(h); last = head; }
+        list.appendChild(btn(o.label, 'wide', function () { pg.pi = o.i; pg.face = 0; pg.quiz = ''; pg.step = 'face'; loadFaceImgs(o.p); drawProg(); }));
+      });
+    } else if (pg.step === 'face') {
+      if (pg.face) list.appendChild(btn('✔ 做到这一面（面 ' + pg.face + '）', 'wide go', function () { pg.step = 'quiz'; pg.quiz = ''; drawProg(); }));
+      var im = faceImgs[p.paper_id] || {};
+      p.faces.forEach(function (fc) {
+        var b = btn('', 'face ghost' + (pg.face === fc.n ? ' on' : ''), function () { pg.face = fc.n; drawProg(); });
+        if (im[fc.n]) { var i = document.createElement('img'); i.alt = ''; i.src = im[fc.n]; b.appendChild(i); }
+        var sp = document.createElement('span'); sp.textContent = '面 ' + fc.n + ' · ' + fc.title; b.appendChild(sp);
+        list.appendChild(b);
+      });
+    } else if (pg.step === 'quiz') {
+      QUIZ.forEach(function (q) { list.appendChild(btn(q, 'wide ghost' + (pg.quiz === q ? ' on' : ''), function () { pg.quiz = q; drawProg(); })); });
+      if (pg.quiz) list.appendChild(btn('💾 存起来', 'wide go', progSave));
+    }
+  }
+  function loadFaceImgs(p) {
+    if (faceImgs[p.paper_id] !== undefined || !hasServer) return;
+    faceImgs[p.paper_id] = null;
+    run('faceThumbs', [pinValue, p.paper_id]).then(function (r) { faceImgs[p.paper_id] = r || {}; if (pg.on && pg.step === 'face') drawProg(); }).catch(function () { faceImgs[p.paper_id] = {}; });
+  }
+  function progSave() {
+    var p = progPaper(), f = progFace(); if (!p || !f || !pg.quiz) return;
+    var rec = { grade: pg.grade, paper_id: p.paper_id, face: f.n, face_title: f.title, quiz: QUIZ_VAL[pg.quiz] };
+    var text = gradeName(pg.grade) + ' · ' + (paperName(p) || p.paper_id) + ' · 做到面 ' + f.n + ' · ' + pg.quiz;
+    say('存的时候稍等……');
+    run('saveProgress', [pinValue, rec]).then(function () {
+      pg.done = '记好了：' + text; pg.step = 'grade'; pg.grade = ''; pg.pi = -1; pg.face = 0; pg.quiz = ''; drawProg(); say('');
+      $('progLayer').scrollTop = 0;
+    }).catch(function (e) { say('没存到：' + e.message + '（再按一次「存起来」）', 'bad'); alert('没存到：' + e.message); });
+  }
+  $('progOpen').onclick = function () { pg.on = true; pg.step = 'grade'; pg.grade = ''; pg.pi = -1; pg.face = 0; pg.quiz = ''; pg.done = ''; show('progLayer', true); drawProg(); $('progLayer').scrollTop = 0; };
+  $('progBack').onclick = function () {
+    if (pg.step === 'grade') { pg.on = false; show('progLayer', false); return; }
+    if (pg.step === 'paper') { pg.step = 'grade'; pg.grade = ''; }
+    else if (pg.step === 'face') { pg.step = 'paper'; pg.pi = -1; pg.face = 0; }
+    else if (pg.step === 'quiz') { pg.step = 'face'; pg.quiz = ''; }
+    drawProg();
+  };
   function loadToday() { if (hasServer) run('todayPapers', [pinValue]).then(drawPapers).catch(function () { drawPapers(null); }); }
   window.__jrDrawPapers = drawPapers;   // local test only (tests/phone-375): feed a saved _今天的卷.json without Google
   var MAX_SIDE = 2600;
