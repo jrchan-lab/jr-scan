@@ -84,6 +84,10 @@
   .recTitle { font-size:18px; font-weight:700; line-height:1.35; word-break:break-all; }
   .recBtns { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:8px; }
   #progText { margin:10px 0; }
+  /* 14-Nov v12 */
+  button.pk.two { white-space:pre-line; text-align:left; font-size:18px; }
+  .pgOk.pgBad { border-color:#ef7d7d; color:#ef7d7d; }
+  button.pk:disabled { opacity:.6; }
 </style>
 </head>
 <body>
@@ -323,39 +327,50 @@
     TODAY.papers.forEach(function (p, i) { if (last && p.paper_id + '|' + p.kind + '|' + p.date === last && gradesOf(p).length) { sel.value = String(i); curGrade = gradesOf(p)[0]; } });
     drawWho();
   }
-  // ---------- 12-Nov v10/v11: up-to-where (grade > class today / paper > face > quiz > save). Writes only through saveProgress(); never touches the file-name state above. ----------
-  // v11 adds to the grade page: every class the timetable has today (even with no paper), today's new papers, unfinished older papers (<= 3), 回头考 rows (做完 / 一半 / 没做), and 「别的」 (one typed line).
+  // ---------- 14-Nov v12 up-to-where: ① 哪一天（上课那天）› ② 哪一班（照那天的时间表）› ③ 哪一份卷 › ④ 第几面 › 小测 › 存 ----------
+  // JR 14-Nov 11:5x「一份卷两班用…对每个科目都会有隐患」+ 12:0x「选日期，然后年级？然后课程」; Big C + 小V joint conclusion (Bus V001 / C003).
+  // Every press carries date (the LESSON day) + class_id/class_name (made by the laptop from the timetable; this page only copies them) + req.
+  // Progress shown per class: p.prog = {class_id or '?': {face, quiz, date}} from today_papers.py. Writes only through saveProgress().
   var PD = null, PROGP = [];       // PD = the whole _今天的卷.json (also when TODAY is null); PROGP = papers + old_papers; pg.pi indexes PROGP
-  var pg = { on: false, step: 'grade', grade: '', pi: -1, face: 0, quiz: '', done: '', more: false }, faceImgs = {};
+  var pg = { on: false, step: 'day', date: '', cls: null, pi: -1, face: 0, quiz: '', done: '', bad: false, more: false, early: false, all: false, saving: false, req: '', xg: '' }, faceImgs = {};
   var QUIZ = ['小测做了', '小测没做', '全部做完'], QUIZ_VAL = { '小测做了': '做了', '小测没做': '没做', '全部做完': '全部做完' };
+  var XSUBJ = ['华文', '马来文', '英文', '数学', '科学', '历史', '作文'];
   function setProgData(data) {
-    var any = data && ((data.papers || []).length || (data.old_papers || []).length || (data.classes_today || []).length);
+    var any = data && ((data.papers || []).length || (data.old_papers || []).length || (data.classes_today || []).length || (data.days || []).length);
     PD = any ? data : null;
     PROGP = PD ? (PD.papers || []).concat(PD.old_papers || []) : [];
+    if (PD && !PD.days) PD.days = [{ date: PD.date, wd: '', classes: (PD.classes_today || []).map(function (c) {   // a laptop list from before v12
+      var id = c.grades.join('') + '-' + c.subject + '-?'; return { id: id, name: c.grades.map(gradeName).join('') + ' · ' + c.subject, grades: c.grades, subject: c.subject, sure: c.sure }; }) }];
   }
-  function pgItems(g) {
-    var seen = {}, news = [], olds = [], recs = [];
+  function newReq() { return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
+  function dayLabel(d) {
+    var n = Math.round((Date.parse(PD.date) - Date.parse(d.date)) / 86400000), w = d.wd ? '（' + d.wd + '）' : '';
+    return (n === 0 ? '今天 · ' : n === 1 ? '昨天 · ' : n === 2 ? '前天 · ' : '') + dayShort(d.date) + w;
+  }
+  function clsName(id) {       // a class id -> its name from any day in the list ('?' = an old press with no class)
+    if (id === '?') return '不知道哪班';
+    for (var i = 0; i < (PD.days || []).length; i++) for (var j = 0; j < PD.days[i].classes.length; j++) if (PD.days[i].classes[j].id === id) return PD.days[i].classes[j].name.split(' · ').slice(-1)[0];
+    return id.split('-').slice(-1)[0];
+  }
+  function progLine(pr) { return pr ? '到面 ' + pr.face + (pr.quiz === '全部做完' ? ' · 全部做完' : pr.quiz === '没做' ? ' · 小测没做' : pr.quiz === '做了' ? ' · 小测做了' : '') + '（' + dayShort(pr.date) + '）' : ''; }
+  function shared(p, c) { var g = gradesOf(p).filter(function (x) { return c.grades.indexOf(x) >= 0; }); return g.length ? g : c.grades.slice(); }
+  function pgPapers(c, d) {     // {day, olds, others, recs} for class c on lesson day d
+    var seen = {}, day = [], olds = [], others = [], recs = [];
     PROGP.forEach(function (p, i) {
-      if (gradesOf(p).indexOf(g) < 0) return;
-      var k = p.paper_id + '|' + p.kind; if (seen[k]) return; seen[k] = 1;
-      var o = { i: i, p: p };
-      if (p.kind === '回头考') { if (p.date === PD.date) recs.push(o); }
-      else if (!p.faces || !p.faces.length) return;
-      else if (p.date === PD.date) news.push(o);
-      else if (!p.done) olds.push(o);
+      if (!gradesOf(p).some(function (g) { return c.grades.indexOf(g) >= 0; }) || p.date > d) return;
+      if (p.kind === '回头考') { if (p.date === d && !seen['r' + p.paper_id]) { seen['r' + p.paper_id] = 1; recs.push({ i: i, p: p }); } return; }
+      if (!p.faces || !p.faces.length || seen[p.paper_id]) return;
+      seen[p.paper_id] = 1;
+      var o = { i: i, p: p }, s = subjectOf(p), mine = (p.prog || {})[c.id];
+      var essay = c.subject === '作文' && (p.cls === c.grades.join('') || /作文|写作|WRITING|KARANGAN/i.test((p.short || '') + p.paper_id));
+      if (s && s !== c.subject && !essay) { if (!(mine && mine.quiz === '全部做完')) others.push(o); return; }   // 作文班 writes in 英文 / 马来文 (JR 2-Nov, 10-Nov): its own joint papers count whatever the subject
+      if (p.date === d) day.push(o);
+      else if (!(mine && mine.quiz === '全部做完')) olds.push(o);
     });
-    var cls = [];       // one line per subject (a dated row and a weekly row can both say 数学)
-    (PD.classes_today || []).forEach(function (c) {
-      if (c.grades.indexOf(g) < 0) return;
-      var same = cls.filter(function (x) { return x.subject === c.subject; })[0];
-      if (same) same.sure = same.sure || c.sure; else cls.push({ subject: c.subject, sure: c.sure });
-    });
-    var subs = cls.map(function (c) { return c.subject; });       // papers of a subject that meets today come first, then the newest; 3 shown unless 「再看更多」
-    var rank = function (o) { return subs.indexOf(subjectOf(o.p)) >= 0 ? 0 : 1; };
-    olds.sort(function (a, b) { return rank(a) - rank(b) || (a.p.date < b.p.date ? 1 : a.p.date > b.p.date ? -1 : a.i - b.i); });
-    return { classes: cls, news: news, olds: pg.more ? olds : olds.slice(0, 3), oldsAll: olds.length, recs: recs };
+    var newest = function (a, b) { return a.p.date < b.p.date ? 1 : a.p.date > b.p.date ? -1 : a.i - b.i; };
+    olds.sort(newest); others.sort(newest);
+    return { day: day, olds: olds, others: others, recs: recs };
   }
-  function progGrades() { return PD ? GRADES.filter(function (g) { var it = pgItems(g); return it.classes.length || it.news.length || it.olds.length || it.recs.length; }) : []; }
   function progPaper() { return pg.pi >= 0 ? PROGP[pg.pi] : null; }
   function progFace() { var p = progPaper(); return p ? p.faces.filter(function (f) { return f.n === pg.face; })[0] : null; }
   function paperName(p) {   // for the 「记好了」 line only: subject + the first word after it, e.g. 历史 Bab1 · 科学 第2课 科学室规则
@@ -366,55 +381,76 @@
     return (sub + ' ' + name.slice(0, 14)).trim();
   }
   function pkHead(list, text, cls) { var h = document.createElement('div'); h.className = 'pkHead' + (cls ? ' ' + cls : ''); h.textContent = text; list.appendChild(h); }
-  function paperBtns(list, os) {     // one wide button per paper; two with the same text get a short extra word
-    var cnt = {}, lab = os.map(function (o) { var t = labelOf(o.p) + (o.p.done ? ' ✔' : ''); cnt[t] = (cnt[t] || 0) + 1; return t; });
-    os.forEach(function (o, n) {
-      var t = cnt[lab[n]] > 1 ? lab[n] + ' · ' + (extraOf(o.p) || o.p.paper_id) : lab[n];
-      if (cnt[lab[n]] > 1 && os.some(function (x, m) { return m !== n && labelOf(x.p) + (x.p.done ? ' ✔' : '') === lab[n] && extraOf(x.p) === extraOf(o.p); })) t = lab[n] + ' · ' + o.p.paper_id.replace(/^[A-Z]+-[SF0-9]+-\d+-?/, '').slice(0, 10);
-      list.appendChild(btn(t, 'wide', function () { pg.pi = o.i; pg.face = 0; pg.quiz = ''; pg.step = 'face'; loadFaceImgs(o.p); drawProg(); }));
+  function paperBtns(list, os) {     // one wide button per paper: name, then this class's place, then the other classes' places (each counted apart)
+    var cnt = {}, nm = function (p) { return labelOf(p) + (p.short ? ' · ' + paperName(p) : ''); };
+    os.forEach(function (o) { cnt[nm(o.p)] = (cnt[nm(o.p)] || 0) + 1; });
+    os.forEach(function (o) {
+      var p = o.p, pr = p.prog || {}, mine = pr[pg.cls.id];
+      var t = nm(p); if (cnt[t] > 1) t += ' · ' + p.paper_id.replace(/^[A-Z]+-[SF0-9]+-\d+-?/, '').slice(0, 14);   // two papers with the same words: add the end of the paper id
+      t += '\n这一班：' + (mine ? progLine(mine) : '还没按');
+      Object.keys(pr).filter(function (k) { return k !== pg.cls.id; }).forEach(function (k) { t += '\n' + clsName(k) + '：' + progLine(pr[k]) + '（分开算）'; });
+      list.appendChild(btn(t, 'wide two', function () { pg.pi = o.i; pg.face = 0; pg.quiz = ''; pg.step = 'face'; loadFaceImgs(p); drawProg(); }));
     });
   }
   function recRow(list, o, many) {
     var row = document.createElement('div'); row.className = 'recRow';
     var t = document.createElement('div'); t.className = 'recTitle';
-    t.textContent = '回头考 ' + dayShort(o.p.date) + (many ? ' · ' + (o.p.short || o.p.paper_id).slice(0, 16) : '') + (o.p.done ? ' ✔ 已记' : ''); row.appendChild(t);
+    t.textContent = '回头考 ' + dayShort(o.p.date) + (many ? ' · ' + (o.p.short || o.p.paper_id).slice(0, 16) : '') + (o.p.rec_st ? ' ✔ 已记：' + o.p.rec_st : ''); row.appendChild(t);
     var bs = document.createElement('div'); bs.className = 'recBtns';
     ['做完', '一半', '没做'].forEach(function (st) { bs.appendChild(btn(st, 'ghost', function () { recSave(o, st); })); });
     row.appendChild(bs); list.appendChild(row);
   }
   function drawProg() {
     if (!PD) return;
-    var list = $('progList'), p = progPaper(), f = progFace(), parts = [], h;
-    if (pg.grade) parts.push(gradeName(pg.grade)); if (p) parts.push(labelOf(p)); if (f) parts.push('面 ' + f.n); if (pg.quiz) parts.push(pg.quiz);
+    var list = $('progList'), p = progPaper(), f = progFace(), parts = [];
+    if (pg.date) parts.push(dayShort(pg.date)); if (pg.cls) parts.push(pg.cls.name); if (p) parts.push(labelOf(p)); if (f) parts.push('面 ' + f.n); if (pg.quiz) parts.push(pg.quiz);
     if (pg.step === 'text') parts.push('别的');
-    $('progCrumb').textContent = parts.length ? parts.join(' › ') : '📍 上到哪里：先按年级。';
+    $('progCrumb').textContent = parts.length ? parts.join(' › ') : '📍 上到哪里：先按上课那一天。';
     $('progCrumb').className = 'crumb' + (parts.length ? '' : ' empty');
-    $('progTitle').textContent = { grade: '① 按年级', paper: '② 今天的课 · 没做完的旧卷 · 回头考', face: '③ 按做到的那一面', quiz: '④ 小测呢？', text: '② 打一行字（别的）' }[pg.step];
-    $('progMsg').textContent = pg.done; show('progMsg', !!pg.done && pg.step === 'grade');
+    $('progTitle').textContent = { day: '① 哪一天上的课？', 'class': '② 哪一班？（照那天的时间表）', xgrade: '② 时间表没有的班：哪一年级？', xsubj: '② 时间表没有的班：哪一科？', paper: '③ 哪一份卷？', face: '④ 做到哪一面？', quiz: '④ 小测呢？', text: '打一行字（别的）' }[pg.step];
+    $('progMsg').className = 'pgOk' + (pg.bad ? ' pgBad' : '');      // before show(): className would wipe its 'hidden'
+    $('progMsg').textContent = pg.done; show('progMsg', !!pg.done && pg.step === 'day');
     show('progText', pg.step === 'text');
     list.innerHTML = '';
-    if (pg.step === 'grade') {
-      progGrades().forEach(function (g) { list.appendChild(btn(gradeName(g), '', function () { pg.grade = g; pg.step = 'paper'; pg.done = ''; pg.more = false; drawProg(); })); });
-      if (!progGrades().length) pkHead(list, '单子里还没有今天的班（电脑还没更新）。');
-      list.appendChild(btn('✍ 别的（我打字）', 'ghost wide', function () { pg.grade = ''; pg.step = 'text'; pg.done = ''; $('progText').value = ''; drawProg(); }));
+    if (pg.step === 'day') {
+      var ds = PD.days || [];
+      ds.slice(0, 3).forEach(function (d) { list.appendChild(btn(dayLabel(d), 'wide', function () { pg.date = d.date; pg.step = 'class'; pg.done = ''; drawProg(); })); });
+      if (ds.length > 3) {
+        list.appendChild(btn(pg.early ? '少看一点' : '更早 · 选日期（最多 14 天）', 'ghost wide', function () { pg.early = !pg.early; drawProg(); }));
+        if (pg.early) ds.slice(3).forEach(function (d) { list.appendChild(btn(dayLabel(d), 'wide', function () { pg.date = d.date; pg.step = 'class'; pg.done = ''; drawProg(); })); });
+      }
+      pkHead(list, '记的是上课那一天，不是你按的时间（今晚 11 点补按也算今天的课）。', 'soft');
+      list.appendChild(btn('✍ 别的（我打字）', 'ghost wide', function () { pg.date = PD.date; pg.cls = null; pg.step = 'text'; pg.done = ''; $('progText').value = ''; drawProg(); }));
+    } else if (pg.step === 'class') {
+      var day = (PD.days || []).filter(function (d) { return d.date === pg.date; })[0] || { classes: [] };
+      day.classes.forEach(function (c) { list.appendChild(btn(c.name + (c.sure ? '' : ' ？（时间表没核）'), 'wide', function () { pg.cls = c; pg.step = 'paper'; pg.all = false; pg.more = false; drawProg(); })); });
+      if (!day.classes.length) pkHead(list, '这一天时间表没有课。', 'soft');
+      list.appendChild(btn('时间表没有的班（按年级 + 科目）', 'ghost wide', function () { pg.step = 'xgrade'; drawProg(); }));
+      list.appendChild(btn('✍ 别的（我打字）', 'ghost wide', function () { pg.cls = null; pg.step = 'text'; $('progText').value = ''; drawProg(); }));
+    } else if (pg.step === 'xgrade') {
+      GRADES.forEach(function (g) { list.appendChild(btn(gradeName(g), '', function () { pg.xg = g; pg.step = 'xsubj'; drawProg(); })); });
+    } else if (pg.step === 'xsubj') {
+      XSUBJ.forEach(function (s) { list.appendChild(btn(s, '', function () {
+        pg.cls = { id: pg.xg + '-' + s + '-临时', name: gradeName(pg.xg) + ' · ' + s + ' · 时间表没有的班', grades: [pg.xg], subject: s, extra: true };
+        pg.step = 'paper'; pg.all = false; pg.more = false; drawProg(); })); });
     } else if (pg.step === 'paper') {
-      var it = pgItems(pg.grade), used = {};
-      it.classes.forEach(function (c) {
-        pkHead(list, '📚 今天有课：' + c.subject + (c.sure ? '' : ' ？（时间表没核）'));
-        var mine = it.news.filter(function (o) { return subjectOf(o.p) === c.subject && !used[o.i]; });
-        mine.forEach(function (o) { used[o.i] = 1; });
-        if (mine.length) paperBtns(list, mine); else pkHead(list, '这班今天夹里没有卷', 'soft');
-      });
-      var rest = it.news.filter(function (o) { return !used[o.i]; });
-      if (rest.length) { pkHead(list, '今天的新卷'); paperBtns(list, rest); }
+      var it = pgPapers(pg.cls, pg.date);
+      pkHead(list, '那天印的卷'); if (it.day.length) paperBtns(list, it.day); else pkHead(list, '那天夹里没有这一科的卷', 'soft');
       if (it.olds.length) {
-        pkHead(list, '还没做完的旧卷' + (it.oldsAll > 3 ? '（' + (pg.more ? '全部 ' : '先看 3 份，共 ') + it.oldsAll + ' 份）' : '')); paperBtns(list, it.olds);
-        if (it.oldsAll > 3) list.appendChild(btn(pg.more ? '少看一点' : '再看更多旧卷（还有 ' + (it.oldsAll - 3) + ' 份）', 'ghost wide', function () { pg.more = !pg.more; drawProg(); }));
+        pkHead(list, '这一班这一科还没做完的卷' + (it.olds.length > 3 ? '（' + (pg.more ? '全部 ' : '先看 3 份，共 ') + it.olds.length + ' 份）' : ''));
+        paperBtns(list, pg.more ? it.olds : it.olds.slice(0, 3));
+        if (it.olds.length > 3) list.appendChild(btn(pg.more ? '少看一点' : '再看更多（还有 ' + (it.olds.length - 3) + ' 份）', 'ghost wide', function () { pg.more = !pg.more; drawProg(); }));
       }
       if (it.recs.length) { pkHead(list, '回头考 / 复习：做了没有？'); it.recs.forEach(function (o) { recRow(list, o, it.recs.length > 1); }); }
+      if (it.others.length) {
+        list.appendChild(btn(pg.all ? '收起别科的卷' : '这一年级别科的卷（' + it.others.length + ' 份）', 'ghost wide', function () { pg.all = !pg.all; drawProg(); }));
+        if (pg.all) paperBtns(list, it.others);
+      }
       list.appendChild(btn('✍ 别的（我打字）', 'ghost wide', function () { pg.step = 'text'; $('progText').value = ''; drawProg(); }));
     } else if (pg.step === 'face') {
-      if (pg.face) list.appendChild(btn('✔ 做到这一面（面 ' + pg.face + '）', 'wide go', function () { pg.step = 'quiz'; pg.quiz = ''; drawProg(); }));
+      var mine = (p.prog || {})[pg.cls.id];
+      if (mine) pkHead(list, '这一班上次：' + progLine(mine), 'soft');
+      if (pg.face) list.appendChild(btn('✔ 做到这一面（面 ' + pg.face + '）', 'wide go', function () { pg.step = 'quiz'; pg.quiz = ''; pg.req = newReq(); drawProg(); }));
       var im = faceImgs[p.paper_id] || {};
       p.faces.forEach(function (fc) {
         var b = btn('', 'face ghost' + (pg.face === fc.n ? ' on' : ''), function () { pg.face = fc.n; drawProg(); });
@@ -424,9 +460,9 @@
       });
     } else if (pg.step === 'quiz') {
       QUIZ.forEach(function (q) { list.appendChild(btn(q, 'wide ghost' + (pg.quiz === q ? ' on' : ''), function () { pg.quiz = q; drawProg(); })); });
-      if (pg.quiz) list.appendChild(btn('💾 存起来', 'wide go', progSave));
+      if (pg.quiz) { var sb = btn(pg.saving ? '存的时候稍等……' : '💾 存起来', 'wide go', progSave); sb.disabled = pg.saving; list.appendChild(sb); }
     } else if (pg.step === 'text') {
-      list.appendChild(btn('💾 存起来', 'wide go', textSave));
+      var tb = btn(pg.saving ? '存的时候稍等……' : '💾 存起来', 'wide go', textSave); tb.disabled = pg.saving; list.appendChild(tb);
     }
   }
   function loadFaceImgs(p) {
@@ -434,37 +470,58 @@
     faceImgs[p.paper_id] = null;
     run('faceThumbs', [pinValue, p.paper_id]).then(function (r) { faceImgs[p.paper_id] = r || {}; if (pg.on && pg.step === 'face') drawProg(); }).catch(function () { faceImgs[p.paper_id] = {}; });
   }
-  function progSent(text) {
-    pg.done = '记好了：' + text; pg.step = 'grade'; pg.grade = ''; pg.pi = -1; pg.face = 0; pg.quiz = ''; drawProg(); say('');
+  function baseRec() {         // date + class for every press (v12)
+    var c = pg.cls; if (!c) return { date: pg.date, class_id: '没选班', class_name: '没选班', grades: [], subject: '' };
+    return { date: pg.date, class_id: c.id, class_name: c.name, grades: c.grades.slice(), subject: c.subject };
+  }
+  function progSent(text, r, want) {
+    pg.saving = false; pg.req = '';
+    pg.bad = !(r && typeof r === 'object' && r.date === want);   // a v11 Code.gs answers true and drops date + class: say so in red
+    pg.done = pg.bad ? '⚠ 存到了，可是存档程序还是旧的：日期和班没记到。跟大C讲一声。（' + text + '）' : '✔ 记好了：' + text;
+    pg.step = 'day'; pg.date = ''; pg.cls = null; pg.pi = -1; pg.face = 0; pg.quiz = ''; drawProg(); say('');
     $('progLayer').scrollTop = 0;
   }
-  function progFail(e) { say('没存到：' + e.message + '（再按一次）', 'bad'); alert('没存到：' + e.message); }
+  function progFail(e) { pg.saving = false; drawProg(); say('没存到：' + e.message + '（再按一次）', 'bad'); alert('没存到：' + e.message); }
   function progSave() {
-    var p = progPaper(), f = progFace(); if (!p || !f || !pg.quiz) return;
-    var rec = { grade: pg.grade, paper_id: p.paper_id, face: f.n, face_title: f.title, quiz: QUIZ_VAL[pg.quiz] };
-    var text = gradeName(pg.grade) + ' · ' + (paperName(p) || p.paper_id) + ' · 做到面 ' + f.n + ' · ' + pg.quiz;
-    var last = Math.max.apply(null, p.faces.map(function (x) { return x.n; }));
-    say('存的时候稍等……');
-    run('saveProgress', [pinValue, rec]).then(function () { if (rec.quiz === '全部做完' || f.n >= last) p.done = true; progSent(text); }).catch(progFail);
+    var p = progPaper(), f = progFace(); if (!p || !f || !pg.quiz || pg.saving) return;
+    var rec = baseRec(); rec.grades = shared(p, pg.cls); rec.grade = rec.grades[0];
+    rec.paper_id = p.paper_id; rec.face = f.n; rec.face_title = f.title; rec.quiz = QUIZ_VAL[pg.quiz]; rec.paper_sha = p.sha || ''; rec.req = pg.req || (pg.req = newReq());
+    var text = dayShort(pg.date) + ' · ' + pg.cls.name + ' · ' + (paperName(p) || p.paper_id) + ' · 做到面 ' + f.n + ' · ' + pg.quiz, cid = pg.cls.id;
+    pg.saving = true; drawProg(); say('存的时候稍等……');
+    run('saveProgress', [pinValue, rec]).then(function (r) {
+      PROGP.forEach(function (q) {     // the same paper printed on two days = two entries: both show the new place at once
+        if (q.paper_id !== p.paper_id) return;
+        q.prog = q.prog || {}; var old = q.prog[cid];
+        if (!old || old.date <= rec.date) q.prog[cid] = { face: rec.face, quiz: rec.quiz, date: rec.date };
+      });
+      progSent(text, r, rec.date);
+    }).catch(progFail);
   }
   function recSave(o, status) {
-    var rec = { kind: '回头考', grade: pg.grade, paper_id: o.p.paper_id, status: status };
-    say('存的时候稍等……');
-    run('saveProgress', [pinValue, rec]).then(function () { o.p.done = true; progSent(gradeName(pg.grade) + ' · 回头考 ' + dayShort(o.p.date) + ' · ' + status); }).catch(progFail);
+    if (pg.saving) return;
+    var rec = baseRec(); rec.grades = shared(o.p, pg.cls); rec.grade = rec.grades[0]; rec.kind = '回头考'; rec.paper_id = o.p.paper_id; rec.status = status; rec.req = newReq();
+    pg.saving = true; say('存的时候稍等……');
+    run('saveProgress', [pinValue, rec]).then(function (r) { o.p.rec_st = status; o.p.done = status === '做完'; progSent(dayShort(pg.date) + ' · ' + gradeName(rec.grade) + ' · 回头考 · ' + status, r, rec.date); }).catch(progFail);
   }
   function textSave() {
     var t = $('progText').value.trim(); if (!t) { say('先打一行字。', 'bad'); return; }
-    var rec = { kind: '别的', grade: pg.grade, text: t };
-    say('存的时候稍等……');
-    run('saveProgress', [pinValue, rec]).then(function () { $('progText').value = ''; progSent('别的 · ' + t.slice(0, 30)); }).catch(progFail);
+    if (pg.saving) return;
+    var rec = baseRec(); if (!pg.cls) { delete rec.class_id; delete rec.class_name; rec.class_id = '没选班'; rec.class_name = '没选班'; }
+    rec.grade = rec.grades[0] || ''; rec.kind = '别的'; rec.text = t; rec.req = pg.req || (pg.req = newReq());
+    pg.saving = true; drawProg(); say('存的时候稍等……');
+    run('saveProgress', [pinValue, rec]).then(function (r) { $('progText').value = ''; progSent(dayShort(pg.date) + ' · 别的 · ' + t.slice(0, 30), r, rec.date); }).catch(progFail);
   }
-  $('progOpen').onclick = function () { pg.on = true; pg.step = 'grade'; pg.grade = ''; pg.pi = -1; pg.face = 0; pg.quiz = ''; pg.done = ''; show('progLayer', true); drawProg(); $('progLayer').scrollTop = 0; };
+  $('progOpen').onclick = function () { pg.on = true; pg.step = 'day'; pg.date = ''; pg.cls = null; pg.pi = -1; pg.face = 0; pg.quiz = ''; pg.done = ''; pg.bad = false; pg.early = false; show('progLayer', true); drawProg(); $('progLayer').scrollTop = 0; };
   $('progBack').onclick = function () {
-    if (pg.step === 'grade') { pg.on = false; show('progLayer', false); return; }
-    if (pg.step === 'paper') { pg.step = 'grade'; pg.grade = ''; }
+    if (pg.saving) return;
+    if (pg.step === 'day') { pg.on = false; show('progLayer', false); return; }
+    if (pg.step === 'class') { pg.step = 'day'; pg.date = ''; }
+    else if (pg.step === 'xgrade') pg.step = 'class';
+    else if (pg.step === 'xsubj') pg.step = 'xgrade';
+    else if (pg.step === 'paper') { pg.step = pg.cls && pg.cls.extra ? 'xsubj' : 'class'; pg.cls = null; }
     else if (pg.step === 'face') { pg.step = 'paper'; pg.pi = -1; pg.face = 0; }
     else if (pg.step === 'quiz') { pg.step = 'face'; pg.quiz = ''; }
-    else if (pg.step === 'text') { pg.step = pg.grade ? 'paper' : 'grade'; }
+    else if (pg.step === 'text') { pg.step = pg.cls ? 'paper' : (pg.date && pg.date !== PD.date ? 'class' : 'day'); }
     drawProg();
   };
   function loadToday() { if (hasServer) run('todayPapers', [pinValue]).then(drawPapers).catch(function () { drawPapers(null); }); }
