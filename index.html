@@ -4,62 +4,160 @@
 <base target="_top">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- v9 (5-Nov): paper + pupil picked with big buttons (grade > paper > pupil). RELATED: apps/scanner/Code.gs (saves the PDFs to Drive), apps/scanner/README.md. v7 (15-Oct evening): ONE page, TWO homes: inside Apps Script it talks via google.script.run (camera = the phone's own camera app, because the Apps Script iframe may not use getUserMedia); on its own HTTPS address (GitHub Pages) it talks to Code.gs doPost via fetch (EXEC_URL) and gets a LIVE camera with a guide frame, a level and live checks. v4 (15-Oct): phone saves the ORIGINAL photos only; the Dell cleaner (cleaner/scan_clean.py) cuts, straightens, removes shadows and makes the 2-up. v3: fast repeat shots with the real camera, auto edge cut (OpenCV.js on demand), auto-turn, book-spread split, shadow-free clean-up, manual corner fix. -->
+<!-- v13 (16-Nov-2026, JR「全部照建议」+ 样子 B): the first page is TODAY'S TIMETABLE (which class is not pressed yet, at a glance); tap a class
+     to record how far it got (face grid 1-12 on one screen, 小测 and 「这份卷」 asked apart, cancel within 10 minutes); 「📷 拍卷子」 is pinned
+     at the bottom and goes photo › paper › upload, one step per screen. Photos open full screen (pinch, swipe). Blackboard palette (JR 12-Oct).
+     RELATED: apps/scanner/Code.gs (saveProgress · undoProgress · tagScan · savePdfs) · apps/scanner/today_papers.py (_今天的卷.json) · README.md.
+     History: v9 (5-Nov) big buttons · v7 (15-Oct) one page, two homes (Apps Script google.script.run / GitHub Pages fetch + live camera) ·
+     v4 the phone saves ORIGINAL photos only; the Dell cleaner (cleaner/scan_clean.py) cuts, straightens and makes the 2-up. -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
-  :root { --bg:#14181d; --card:#1f252d; --ink:#f3f1ea; --soft:#a9b0b8; --accent:#e9b949; --ok:#5fbf77; --bad:#e46a5f; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,"PingFang SC","Microsoft YaHei",sans-serif; font-size:18px; }
-  main { max-width:640px; margin:0 auto; padding:16px; }
-  h1 { font-size:24px; margin:4px 0 12px; }
+  :root { --board:#14231d; --slate:#1b2f27; --slate2:#22392f; --line:#2c4438; --chalk:#f0efe6; --dust:#a9b8ac; --go:#f3d25a; --go-fg:#1d1a05;
+          --done:#7fd3a0; --done-soft:#1f4a34; --wait:#f08c4a; --bad:#ef7d7d; --wood:#5a4330;
+          --bg:var(--board); --card:var(--slate); --ink:var(--chalk); --soft:var(--dust); --accent:var(--go); --ok:var(--done); }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--board); color:var(--chalk); font-family:system-ui,"PingFang SC","Microsoft YaHei",sans-serif; font-size:18px; }
+  main { max-width:560px; margin:0 auto; padding:14px 16px 120px; }
+  .serif, h1, h2 { font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif; }
+  h1 { font-size:30px; margin:2px 0 12px; font-weight:700; }
+  h2 { font-size:26px; margin:2px 0 4px; font-weight:700; }
+  .kicker { color:var(--dust); font-size:17px; font-weight:600; }
+  .sub { color:var(--dust); font-size:17px; margin:0 0 12px; }
   .row { display:flex; gap:10px; flex-wrap:wrap; }
-  button, .btn { border:0; border-radius:12px; padding:16px 18px; font-size:20px; font-weight:600; cursor:pointer; color:#14181d; background:var(--accent); flex:1 1 45%; text-align:center; }
-  button.ghost, .btn.ghost { background:var(--card); color:var(--ink); border:1px solid #39424d; }
+  button, .btn { border:0; border-radius:14px; padding:15px 16px; font-size:20px; font-weight:700; cursor:pointer; color:var(--go-fg); background:var(--go);
+                 flex:1 1 45%; text-align:center; font-family:inherit; line-height:1.3; }
+  button.ghost, .btn.ghost { background:transparent; color:var(--chalk); border:1.5px solid var(--line); font-weight:600; }
+  button.link { background:none; border:0; color:var(--dust); padding:8px 0; font-size:18px; font-weight:600; text-align:left; flex:none; }
   button:disabled { opacity:.45; }
-  input[type=text], input[type=password] { width:100%; font-size:20px; padding:12px; border-radius:10px; border:1px solid #39424d; background:var(--card); color:var(--ink); }
-  select.pick { width:100%; font-size:18px; padding:12px 10px; border-radius:10px; border:1px solid #39424d; background:var(--card); color:var(--ink); }
-  .fname { word-break:break-all; }
-  /* 5-Nov v9 (JR): pick by BIG BUTTONS, not drop-downs. grade > paper > pupil. Every button >= 56 px high, text >= 20 px. */
-  .crumb { min-height:56px; display:flex; align-items:center; padding:8px 14px; border-radius:12px; background:var(--card); border:1px solid #39424d; font-size:20px; font-weight:700; line-height:1.35; word-break:break-all; }
-  .crumb.empty { color:var(--soft); font-weight:400; }
-  .pkTitle { font-size:20px; margin:14px 0 8px; font-weight:700; }
-  .pkList { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
-  .pkList .wide { grid-column:1 / -1; }
-  .pkHead { grid-column:1 / -1; font-size:18px; color:var(--accent); font-weight:700; margin-top:6px; }
-  button.pk { min-height:56px; padding:10px 12px; font-size:20px; flex:none; line-height:1.3; word-break:break-all; }
-  button.pk.on, button.pk.ghost.on { background:var(--accent); color:#14181d; border-color:var(--accent); }
-  button.pk.back { width:100%; margin-top:10px; text-align:left; }
-  label.check { display:flex; align-items:center; gap:10px; margin:10px 0; color:var(--soft); }
-  label.check input { width:24px; height:24px; }
-  .pages { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin:14px 0; }
-  .page { background:var(--card); border-radius:12px; padding:8px; }
-  .page img { width:100%; height:180px; object-fit:contain; background:#fff; border-radius:6px; }
-  .page .n { font-weight:700; margin:4px 0; }
-  .page .tools { display:flex; gap:6px; }
-  .page .tools button { padding:8px 0; font-size:17px; flex:1; background:#2c343e; color:var(--ink); }
-  .msg { margin:12px 0; padding:12px; border-radius:10px; background:var(--card); color:var(--soft); white-space:pre-line; }
-  .msg.ok { color:var(--ok); } .msg.bad { color:var(--bad); }
-  .links a { display:block; color:var(--accent); margin:8px 0; font-size:18px; word-break:break-all; }
-  .hint { color:var(--soft); font-size:15px; }
+  button.gone { background:#2b3a33; color:var(--dust); opacity:1; }
+  input[type=text], input[type=password] { width:100%; font-size:20px; padding:12px; border-radius:12px; border:1.5px solid var(--line); background:var(--slate); color:var(--chalk); }
   .hidden { display:none !important; }
-  /* full-screen layers */
-  .layer { position:fixed; inset:0; background:#000; z-index:10; display:flex; flex-direction:column; }
+  .hint { color:var(--dust); font-size:16px; }
+  .fname { word-break:break-all; }
+  /* ---------- home = today's timetable (样子 B) ---------- */
+  .tt { border-top:1px solid var(--line); margin-top:6px; }
+  .ttRow { display:flex; align-items:center; gap:12px; width:100%; padding:14px 2px; border:0; border-bottom:1px solid var(--line); border-radius:0; background:none;
+           color:var(--chalk); text-align:left; font-weight:600; }
+  .ttRow .nm { flex:1; font-size:21px; line-height:1.3; }
+  .ttRow .nm small { display:block; color:var(--dust); font-size:16px; font-weight:400; margin-top:2px; }
+  .chip { flex:0 0 auto; font-size:16px; padding:5px 12px; border-radius:20px; font-weight:700; }
+  .chip.did { background:var(--done-soft); color:var(--done); }
+  .chip.wait { border:1.5px solid var(--wait); color:var(--wait); }
+  .chip.dim { border:1.5px solid var(--line); color:var(--dust); }
+  .moreBtns { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:16px; }
+  .moreBtns button { font-size:17px; padding:12px 8px; }
+  .card { background:var(--slate); border:1.5px solid var(--line); border-radius:16px; padding:14px; margin:12px 0; }
+  .card.warn { border-color:var(--go); padding:6px 14px; }
+  .card.warn > button.link { color:var(--go); width:100%; }
+  .card h3 { margin:0 0 6px; font-size:19px; }
+  .unk { display:flex; gap:10px; align-items:center; padding:8px 0; border-top:1px solid var(--line); }
+  .unk span { flex:1; font-size:16px; word-break:break-all; color:var(--dust); }
+  .unk button { flex:0 0 auto; font-size:17px; padding:10px 14px; }
+  /* bottom bar (pinned) */
+  .dock { position:fixed; left:0; right:0; bottom:0; z-index:30; padding:12px 16px; padding-bottom:max(12px, env(safe-area-inset-bottom));
+          background:linear-gradient(transparent, rgba(20,35,29,.94) 30%); }
+  .dock .in { max-width:560px; margin:0 auto; display:flex; gap:10px; }
+  .dock button { font-size:22px; padding:18px 12px; border-radius:40px; }
+  /* ---------- class page ---------- */
+  .paper { background:var(--slate); border:1.5px solid var(--line); border-radius:16px; margin:12px 0; overflow:hidden; }
+  .paper.open { border-color:var(--go); }
+  .pHead { display:block; width:100%; background:none; border:0; border-radius:0; color:var(--chalk); text-align:left; padding:14px; font-weight:700; font-size:19px; }
+  .pHead .st { display:block; font-weight:500; font-size:16px; color:var(--dust); margin-top:4px; white-space:pre-line; }
+  .pHead .ph { display:block; font-weight:600; font-size:16px; color:var(--done); margin-top:4px; }
+  .pBody { padding:0 14px 14px; }
+  .q { font-size:18px; font-weight:700; margin:14px 0 8px; }
+  .q small { color:var(--dust); font-weight:400; font-size:15px; }
+  .faces { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+  .faces button { padding:0; height:58px; border-radius:8px; font-size:28px; font-family:"Noto Serif SC",Georgia,serif; font-weight:600; flex:none;
+                  background:var(--board); color:var(--chalk); border:1.5px solid var(--line); }
+  .faces button.past { color:#5f7368; text-decoration:line-through; text-decoration-thickness:2px; background:#17271f; }
+  .faces button.on { background:var(--go); color:var(--go-fg); border-color:var(--go); text-decoration:none; }
+  .faceInfo { display:flex; gap:10px; align-items:center; margin-top:8px; color:var(--dust); font-size:16px; min-height:24px; }
+  .faceInfo img { width:64px; height:88px; object-fit:cover; object-position:top; border-radius:6px; background:#fff; flex:0 0 auto; }
+  .seg { display:flex; border:1.5px solid var(--line); border-radius:40px; overflow:hidden; }
+  .seg button { flex:1; border-radius:0; background:transparent; color:var(--chalk); font-size:19px; padding:14px 6px; }
+  .seg button.on { background:var(--go); color:var(--go-fg); }
+  .saveRow { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+  .saveRow button { border-radius:40px; padding:16px 6px; font-size:19px; }
+  .saveRow button.one { grid-column:1 / -1; }
+  .ok { margin:12px 0; padding:14px; border-radius:12px; background:var(--done-soft); border-left:5px solid var(--done); color:var(--done); font-size:19px; font-weight:700; line-height:1.4; }
+  .ok.badBox { background:#3a2323; border-left-color:var(--bad); color:var(--bad); }
+  .ok button.link { color:var(--chalk); text-decoration:underline; display:block; padding:8px 0 0; font-size:18px; }
+  .ask { margin:12px 0; padding:14px; border-radius:12px; border:2px solid var(--go); background:#2e2a12; font-size:18px; font-weight:600; line-height:1.4; }
+  .note { color:var(--dust); font-size:15px; margin:4px 0 0; }
+  .sect { color:var(--go); font-size:17px; font-weight:700; margin:20px 0 0; }
+  .recBtns { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+  .recBtns button { background:transparent; color:var(--chalk); border:1.5px solid var(--line); padding:13px 4px; font-size:19px; }
+  .recBtns button.on { background:var(--go); color:var(--go-fg); border-color:var(--go); }
+  /* ---------- shoot: 1 photo › 2 paper › 3 upload ---------- */
+  .steps { display:flex; gap:6px; margin:4px 0 14px; }
+  .steps button { flex:1; font-size:16px; padding:9px 4px; border-radius:30px; background:transparent; color:var(--dust); border:1.5px solid var(--line); font-weight:600; }
+  .steps button.on { background:var(--slate2); color:var(--chalk); border-color:var(--go); }
+  .steps button.did { color:var(--done); }
+  .shootBtns { display:flex; flex-direction:column; gap:10px; }
+  .btn.big, button.big { font-size:24px; padding:22px 16px; flex:none; border-radius:18px; }
+  .btn.small { font-size:17px; padding:12px; flex:none; }
+  .pages { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:14px 0; }
+  .page { position:relative; background:var(--slate); border-radius:10px; padding:5px; border:2px solid transparent; }
+  .page.bad { border-color:var(--bad); }
+  .page img { display:block; width:100%; aspect-ratio:3/4; object-fit:cover; object-position:top; background:#fff; border-radius:6px; }
+  .page .n { position:absolute; left:9px; top:9px; background:rgba(20,35,29,.85); color:var(--chalk); font-size:15px; font-weight:700; padding:2px 8px; border-radius:10px; }
+  .page .w { display:block; color:var(--bad); font-size:14px; font-weight:700; margin-top:4px; text-align:center; }
+  .who { margin:6px 0 14px; padding:16px; border-radius:16px; background:var(--slate); border:1.5px solid var(--line); }
+  .who .big { font-size:26px; font-weight:800; line-height:1.3; }
+  .who .big b { color:var(--go); }
+  .pkList { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
+  .pkList .wide { grid-column:1 / -1; }
+  .pkHead { grid-column:1 / -1; font-size:17px; color:var(--go); font-weight:700; margin-top:8px; }
+  .pkHead.soft { color:var(--dust); font-weight:400; font-size:16px; margin-top:0; }
+  button.pk { min-height:54px; padding:10px 12px; font-size:19px; flex:none; line-height:1.3; word-break:break-all; background:transparent; color:var(--chalk); border:1.5px solid var(--line); font-weight:600; text-align:left; }
+  button.pk.on { background:var(--go); color:var(--go-fg); border-color:var(--go); }
+  button.pk.two { white-space:pre-line; font-size:18px; }
+  .links a { display:block; color:var(--go); margin:8px 0; font-size:17px; word-break:break-all; }
+  #msg { position:fixed; left:12px; right:12px; bottom:96px; z-index:35; max-width:536px; margin:0 auto; padding:12px 14px; border-radius:12px; background:#0e1a15;
+         border:1.5px solid var(--line); color:var(--chalk); font-size:17px; white-space:pre-line; box-shadow:0 6px 20px rgba(0,0,0,.4); }
+  #msg.ok { border-color:var(--done); color:var(--done); } #msg.bad { border-color:var(--bad); color:var(--bad); }
+  #msg:empty { display:none; }
+  #ver { margin:28px 0 0; text-align:center; color:var(--dust); font-size:15px; }
+  /* ---------- slide-up panel (设计灵感 16-Oct #深色面板从底部滑上来) ---------- */
+  #sheetBg { position:fixed; inset:0; z-index:70; background:rgba(0,0,0,.55); opacity:0; transition:opacity .3s; }
+  #sheetBg.on { opacity:1; }
+  #sheet { position:fixed; left:0; right:0; bottom:0; z-index:71; max-height:86vh; overflow:auto; background:var(--slate); border-top:2px solid var(--go);
+           border-radius:22px 22px 0 0; padding:20px 16px; padding-bottom:max(20px, env(safe-area-inset-bottom)); transform:translateY(105%); transition:transform .55s cubic-bezier(.2,.9,.25,1); }
+  #sheet.on { transform:none; }
+  #sheet .in { max-width:560px; margin:0 auto; }
+  #sheetTitle { font-size:22px; font-weight:800; margin:0 0 6px; }
+  #sheetText { color:var(--dust); font-size:17px; margin:0 0 14px; white-space:pre-line; }
+  #sheetBtns { display:flex; flex-direction:column; gap:8px; }
+  #sheetBtns button { flex:none; }
+  /* ---------- full-screen photo viewer: pinch, double-tap, swipe ---------- */
+  #vw { position:fixed; inset:0; z-index:60; background:#000; touch-action:none; overflow:hidden; }
+  #vwImg { position:absolute; left:0; top:0; transform-origin:0 0; user-select:none; -webkit-user-drag:none; max-width:none; }
+  #vwTop, #vwBot { position:absolute; left:0; right:0; display:flex; gap:8px; align-items:center; padding:10px 12px; background:rgba(20,35,29,.88); z-index:2; }
+  #vwTop { top:0; padding-top:max(10px, env(safe-area-inset-top)); }
+  #vwBot { bottom:0; padding-bottom:max(10px, env(safe-area-inset-bottom)); }
+  #vwTitle { flex:1; font-size:19px; font-weight:700; }
+  #vwTitle i { color:var(--bad); font-style:normal; }
+  #vwTop button { flex:0 0 auto; padding:10px 16px; font-size:18px; }
+  #vwBot button { flex:1; font-size:17px; padding:12px 4px; background:transparent; color:var(--chalk); border:1.5px solid var(--line); }
+  #vwBot button.del { color:var(--bad); border-color:#6b3434; }
+  #vwHint { position:absolute; left:0; right:0; bottom:84px; text-align:center; color:#cfd8d2; font-size:15px; pointer-events:none; text-shadow:0 1px 3px #000; }
+  /* corner editor + live camera (unchanged from v12, palette only) */
+  .layer { position:fixed; inset:0; background:#000; z-index:65; display:flex; flex-direction:column; }
   .layer video, .layer canvas { flex:1; width:100%; min-height:0; object-fit:contain; touch-action:none; }
   .bar { display:flex; gap:10px; padding:12px; background:#0b0e11; align-items:center; }
   .bar button { flex:1; }
-  .count { color:#fff; font-size:18px; min-width:90px; text-align:center; }
-  .btn.small { font-size:16px; padding:10px; flex:1 1 100%; }
-  .btn.big { font-size:24px; padding:22px 18px; flex:1 1 100%; }
-  /* live camera layer */
-  .cam { position:fixed; inset:0; background:#000; z-index:20; overflow:hidden; user-select:none; -webkit-user-select:none; }
+  .cam { position:fixed; inset:0; background:#000; z-index:80; overflow:hidden; user-select:none; -webkit-user-select:none; }
   .cam video, .cam canvas { position:absolute; left:0; top:0; width:100%; height:100%; }
   .cam video { object-fit:contain; background:#000; }
   .cam canvas { pointer-events:none; }
-  /* 17-Oct JR: smaller words, never over the frame; colour = state only (blackboard palette: #7fd3a0 ready, #ef7d7d not ready) */
   .cam { --camOk:#7fd3a0; --camBad:#ef7d7d; font-family:"Source Sans 3","Noto Sans SC",system-ui,sans-serif; }
   #camTop { position:absolute; left:0; right:0; top:0; display:flex; gap:6px; padding:8px 10px; padding-top:max(8px, env(safe-area-inset-top)); background:rgba(20,35,29,.82); }
   #camTop button { padding:7px 4px; font-size:15px; font-weight:600; background:#1b2f27; color:#f0efe6; border:1px solid #2f4a3e; border-radius:9px; }
   #camTop button.on { background:#f3d25a; color:#14231d; border-color:#f3d25a; }
+  /* v13 (测试报告 设计怪 8): 「自动拍」 is a switch, not a choice like 一页 / 两页: a dot, never the same yellow block */
+  #camTop #autoBtn { background:#1b2f27; color:#f0efe6; border-color:#2f4a3e; }
+  #camTop #autoBtn.on { color:var(--camOk); border-color:var(--camOk); background:#1b2f27; }
   #camStatus { position:absolute; left:10px; right:58px; top:calc(max(8px, env(safe-area-inset-top)) + 50px); height:34px; display:flex; align-items:center; gap:8px; padding:0 12px; border-radius:17px;
     background:rgba(20,35,29,.86); border:2px solid var(--camBad); color:#f0efe6; font-size:16px; font-weight:600; pointer-events:none; white-space:nowrap; overflow:hidden; }
   #camStatus i { flex:0 0 auto; width:10px; height:10px; border-radius:50%; background:var(--camBad); }
@@ -67,96 +165,120 @@
   #camBottom { position:absolute; left:0; right:0; bottom:0; display:flex; align-items:center; gap:10px; padding:14px; padding-bottom:max(14px, env(safe-area-inset-bottom)); background:linear-gradient(transparent, rgba(0,0,0,.65)); }
   #camBottom .side { flex:1; display:flex; }
   #camBottom .side.r { justify-content:flex-end; }
-  #camDone { flex:0 0 auto; padding:14px 22px; background:rgba(20,24,29,.85); color:var(--ink); border:1px solid #39424d; }
-  #camShot { flex:0 0 auto; width:84px; height:84px; padding:0; border-radius:50%; border:6px solid #fff; background:var(--accent); }
+  #camDone { flex:0 0 auto; padding:14px 22px; background:rgba(20,35,29,.85); color:var(--chalk); border:1px solid var(--line); }
+  #camShot { flex:0 0 auto; width:84px; height:84px; padding:0; border-radius:50%; border:6px solid #fff; background:var(--go); }
   #camCount { color:#fff; font-size:20px; font-weight:700; text-shadow:0 1px 4px #000; }
   #camFlash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; }
-  /* 12-Nov v10: up-to-where */
-  #progLayer { position:fixed; inset:0; z-index:60; background:var(--bg); overflow:auto; padding:14px 16px 40px; }
-  #progOpen { width:100%; margin:0 0 12px; font-size:24px; padding:20px 18px; flex:none; }
-  .pgOk { margin:10px 0; padding:14px; border-radius:12px; border:2px solid var(--ok); font-size:20px; font-weight:700; line-height:1.4; }
-  button.pk.face { word-break:normal; overflow-wrap:anywhere; display:flex; flex-direction:column; align-items:stretch; gap:6px; text-align:left; }
-  button.pk.face img { width:100%; height:auto; border-radius:6px; background:#fff; }
-  button.pk.go { background:var(--ok); color:#14181d; }
-  /* 12-Nov v11 */
-  .pkHead.soft { color:var(--soft); font-weight:400; font-size:17px; margin-top:0; }
-  .recRow { grid-column:1 / -1; padding:10px; border-radius:12px; border:1px solid #39424d; background:var(--card); }
-  .recTitle { font-size:18px; font-weight:700; line-height:1.35; word-break:break-all; }
-  .recBtns { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:8px; }
-  #progText { margin:10px 0; }
-  /* 14-Nov v12 */
-  button.pk.two { white-space:pre-line; text-align:left; font-size:18px; }
-  .pgOk.pgBad { border-color:#ef7d7d; color:#ef7d7d; }
-  button.pk:disabled { opacity:.6; }
+  @media (prefers-reduced-motion: reduce) { #sheet, #sheetBg { transition:none; } }
 </style>
 </head>
 <body>
 <main>
-  <h1>📄 JR 扫描</h1>
-
   <section id="pinBox" class="hidden">
+    <h1>JR 扫描</h1>
     <p>请输入家里的密码：</p>
     <input id="pin" type="password" inputmode="numeric" autocomplete="off">
     <div class="row" style="margin-top:10px"><button id="pinGo">进入</button></div>
   </section>
 
   <section id="app" class="hidden">
-    <button id="progOpen" type="button" class="hidden">📍 上到哪里</button>
-    <div id="progLayer" class="hidden">
-      <div id="progCrumb" class="crumb empty"></div>
-      <button id="progBack" type="button" class="ghost pk back">&larr; 回去</button>
-      <p id="progTitle" class="pkTitle"></p>
-      <div id="progMsg" class="pgOk hidden"></div>
-      <input id="progText" type="text" class="hidden" maxlength="300" placeholder="打一行字（哪一班、做到哪里……）" autocomplete="off">
-      <div id="progList" class="pkList"></div>
-    </div>
-    <div class="row">
-      <button id="liveBtn" class="big hidden">📷 开相机拍</button>
-      <label class="btn" id="camBtn">📷 拍一页<input id="cam" type="file" accept="image/*" capture="environment" class="hidden"></label>
-      <label class="btn ghost">🖼 从相册选（可以一次选很多张）<input id="gallery" type="file" accept="image/*" multiple class="hidden"></label>
-    </div>
-    <div id="camWhy" class="msg bad hidden"><span id="camWhyText"></span>
-      <div class="links"><a id="camWhyLink" href="https://jrchan-lab.github.io/jr-scan/" target="_blank" rel="noopener">https://jrchan-lab.github.io/jr-scan/</a></div>
-      <div class="row"><button id="camWhyCopy" class="ghost">📋 复制网址</button></div>
-    </div>
-    <p class="hint">拍完一页，再按「📷 拍下一页」，一直拍下去，顺序会自动排好。手机的影子会自动淡掉。拍完可以按 ✂ 调边、↻ 转方向、⬆⬇ 换顺序、✕ 删掉。</p>
-
-    <p class="hint">拍好后还要按「上传这份」。看到云端已上传，才代表 Drive 收到；电脑整理、小V核卷是后面的步骤，不能当作已经批改。</p>
-    <span class="hidden"><input id="autocut" type="checkbox"><input id="split" type="checkbox"><input id="enhance" type="checkbox"></span>
-
-    <div id="pages" class="pages"></div>
-
-    <!-- 5-Nov-2026 v9 (JR): big buttons grade > paper > pupil. The two <select>s below are kept HIDDEN as the state store, so every file-name rule stays exactly as in v8. -->
-    <div id="pickBox" class="hidden">
-      <div id="crumb" class="crumb empty"></div>
-      <button id="pkBack" type="button" class="ghost pk back hidden">&larr; 回去</button>
-      <p id="pkTitle" class="pkTitle"></p>
-      <div id="pkList" class="pkList"></div>
-      <p id="pickName" class="hint fname"></p>
-      <span class="hidden"><select id="paperPick"></select><select id="whoPick"></select></span>
-    </div>
-    <div id="typeBox">
-      <p>卷子 / 书的名字：<span class="hint">会记住，下一份不用再打。</span></p>
-      <input id="name" type="text">
-      <p style="margin-top:10px">学生名字：<span class="hint">扫学生的卷才填，每一份换一个；扫书不用填。</span></p>
-      <input id="pupil" type="text" placeholder="例如 陈小明">
-    </div>
-    <div class="row" style="margin-top:12px">
-      <button id="make" disabled>☁ 上传这份到 Drive</button>
-    </div>
-    <p id="uploadState" class="hint" role="status" aria-live="polite">还没拍照片。</p>
-    <div class="row" style="margin-top:10px">
-      <button id="clear" class="ghost" disabled>🗑 全部清掉，重新开始</button>
+    <!-- ===== HOME: today's timetable ===== -->
+    <div id="vHome">
+      <div class="kicker" id="homeDay"></div>
+      <h1 id="homeTitle">今天的课</h1>
+      <button id="homeBackToday" type="button" class="link hidden">← 回到今天</button>
+      <div id="unkBox" class="card warn hidden"></div>
+      <div id="tt" class="tt"></div>
+      <p id="ttEmpty" class="sub hidden" style="margin-top:12px">这一天时间表没有课。</p>
+      <div class="moreBtns">
+        <button id="otherDay" type="button" class="ghost">补按别天的课</button>
+        <button id="extraCls" type="button" class="ghost">时间表没有的班</button>
+        <button id="typeLine" type="button" class="ghost">✍ 别的（我打字）</button>
+        <button id="recentBtn" type="button" class="ghost">最近存的文件</button>
+      </div>
+      <div id="textBox" class="card hidden">
+        <h3>打一行字（哪一班、做到哪里……）</h3>
+        <input id="progText" type="text" maxlength="300" autocomplete="off">
+        <div class="row" style="margin-top:10px"><button id="textCancel" type="button" class="ghost">不打了</button><button id="textSave" type="button">存起来</button></div>
+      </div>
+      <div id="recentBox" class="card hidden"><h3>最近存的文件</h3><div id="recent" class="links hint">（还没有）</div></div>
     </div>
 
-    <div id="msg" class="msg hidden"></div>
-    <div id="links" class="links"></div>
+    <!-- ===== CLASS: how far did this class get ===== -->
+    <div id="vClass" class="hidden">
+      <button id="clsBack" type="button" class="link">← 今天的课表</button>
+      <h2 id="clsTitle"></h2>
+      <p id="clsSub" class="sub"></p>
+      <div id="clsDone"></div>
+      <div id="clsList"></div>
+    </div>
 
-    <p style="margin-top:24px">最近存的文件：</p>
-    <div id="recent" class="links hint">（还没有）</div>
+    <!-- ===== SHOOT: 1 photo › 2 paper › 3 upload, one step per screen ===== -->
+    <div id="vShoot" class="hidden">
+      <button id="shootBack" type="button" class="link">← 今天的课表</button>
+      <div class="steps"><button id="st1" type="button">① 拍照</button><button id="st2" type="button">② 哪份卷</button><button id="st3" type="button">③ 上传</button></div>
+
+      <div id="s1">
+        <div class="shootBtns">
+          <button id="liveBtn" type="button" class="big hidden">📷 开相机拍</button>
+          <label class="btn big" id="camBtn">📷 拍一页<input id="cam" type="file" accept="image/*" capture="environment" class="hidden"></label>
+          <label class="btn ghost small">🖼 从相册选（可以一次选很多张）<input id="gallery" type="file" accept="image/*" multiple class="hidden"></label>
+        </div>
+        <div id="camWhy" class="card hidden"><span id="camWhyText" style="white-space:pre-line"></span>
+          <div class="links"><a id="camWhyLink" href="https://jrchan-lab.github.io/jr-scan/" target="_blank" rel="noopener">https://jrchan-lab.github.io/jr-scan/</a></div>
+          <div class="row"><button id="camWhyCopy" class="ghost">📋 复制网址</button></div>
+        </div>
+        <p id="pagesHint" class="hint hidden">点一张照片 = 看大图（两指放大、左右滑）。</p>
+        <div id="pages" class="pages"></div>
+        <button id="clear" type="button" class="ghost hidden" style="width:100%">🗑 全部清掉（照片和名字）</button>
+      </div>
+
+      <div id="s2" class="hidden">
+        <div id="pickBox">
+          <p id="pkTitle" class="q"></p>
+          <div id="pkList" class="pkList"></div>
+          <input id="pupilType" type="text" class="hidden" placeholder="打学生名字，例如 陈小明" autocomplete="off" style="margin-top:10px">
+          <span class="hidden"><select id="paperPick"></select><select id="whoPick"></select></span>
+        </div>
+        <div id="typeBox" class="hidden">
+          <p>卷子 / 书的名字：<span class="hint">会记住，下一份不用再打。</span></p>
+          <input id="name" type="text">
+          <p style="margin-top:10px">学生名字：<span class="hint">扫学生的卷才填；扫书不用填。</span></p>
+          <input id="pupil" type="text" placeholder="例如 陈小明">
+        </div>
+      </div>
+
+      <div id="s3" class="hidden">
+        <div class="who"><div class="big" id="whoBig"></div><div class="sub" id="whoPaper" style="margin:6px 0 0"></div></div>
+        <button id="make" type="button" class="big" style="width:100%" disabled>☁ 上传</button>
+        <p id="uploadState" class="hint" role="status" aria-live="polite">还没拍照片。</p>
+        <div id="links" class="links"></div>
+        <div id="afterUp" class="hidden" style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+          <button id="nextPupil" type="button" class="big">📷 下一个学生（同一份卷）</button>
+          <button id="finishUp" type="button" class="ghost">完成，回课表</button>
+        </div>
+        <p id="pickName" class="hint fname"></p>
+      </div>
+      <span class="hidden"><input id="autocut" type="checkbox"><input id="split" type="checkbox"><input id="enhance" type="checkbox"></span>
+    </div>
   </section>
-  <p id="ver" class="hint" style="margin-top:28px;text-align:center"></p>
+  <p id="ver"></p>
 </main>
+
+<div class="dock hidden" id="dock"><div class="in"><button id="dockBtn" type="button">📷 拍卷子</button></div></div>
+<div id="msg" role="status" aria-live="polite"></div>
+
+<!-- slide-up panel: every question the page asks (no browser confirm / alert boxes) -->
+<div id="sheetBg" class="hidden"></div>
+<div id="sheet" class="hidden" role="dialog" aria-modal="true"><div class="in"><p id="sheetTitle"></p><p id="sheetText"></p><div id="sheetBtns"></div></div></div>
+
+<!-- full-screen photo -->
+<div id="vw" class="hidden">
+  <img id="vwImg" alt="">
+  <div id="vwTop"><span id="vwTitle"></span><button id="vwClose" type="button">✕ 关</button></div>
+  <div id="vwHint">两指放大 · 点两下放大 · 左右滑看别页</div>
+  <div id="vwBot"><button id="vwRot" type="button">↻ 转</button><button id="vwCut" type="button">✂ 调边</button><button id="vwLeft" type="button">⬅ 往前</button><button id="vwDel" type="button" class="del">🗑 删掉这页</button></div>
+</div>
 
 <!-- corner editor layer -->
 <div id="edLayer" class="layer hidden">
@@ -175,7 +297,7 @@
   <div id="camTop">
     <button id="modeOne" class="on">一页</button>
     <button id="modeTwo">两页（书）</button>
-    <button id="autoBtn" class="on">自动拍：开</button>
+    <button id="autoBtn" class="on">● 自动拍：开</button>
   </div>
   <div id="camStatus"><i></i><span id="camStatusText"></span></div>
   <div id="camFlash"></div>
@@ -191,54 +313,58 @@
   // Big C fills in JR's Apps Script web-app address (https://script.google.com/macros/s/.../exec) before the page is published on GitHub Pages.
   // Inside Apps Script itself this stays unused (google.script.run is used instead).
   var EXEC_URL = 'https://script.google.com/macros/s/AKfycbyxbS6gZNiC37tzVZgdoM4eJLfdWZAKOU5rGPMp-D9XRwd8DTkhQL4Braa3lYnddZ3e1A/exec';   // filled in only in the published copy (apps/scanner/publish_jr_scan.py); the address never goes into this repo
+  var VERSION = '第十三版 · 16-Nov-2026';
   var onGoogle = typeof google !== 'undefined' && google.script && google.script.run;
   var hasServer = !!(onGoogle || EXEC_URL);     // false = nothing to save to: the PDF is only downloaded
   var $ = function (id) { return document.getElementById(id); };
-  var pages = [];            // {orig: dataURL, w, h, quad: [[x,y]x4] in orig px or null, cut: dataURL|null, rot: 0..3}
+  var pages = [];            // {orig: dataURL, w, h, quad: [[x,y]x4] in orig px or null, cut: dataURL|null, rot: 0..3, warn}
   var pageSerial = 0, lastSavedSignature = '', lastUploadedName = '', uploadBusy = false, uploadUnknown = false;
   function uploadSignature_() {
     return JSON.stringify([$('name').value.trim(), $('pupil').value.trim(), $('paperPick').value, $('whoPick').value, pages.map(function(p) {
       return [p.uid, p.rot, p.quad, p.cut ? p.cut.length : 0];
     })]);
   }
+  function uploaded_() { return !!lastSavedSignature && uploadSignature_() === lastSavedSignature; }
   function uploadStateText_(count, busy, saved, name, uncertain) {
-    if (busy) return '正在制作并上传，请等云端回执，不要重复按。';
+    if (busy) return '正在上传，请等一等，不要再按。';
     if (!count) return '还没拍照片。';
-    if (saved) return '云端已上传：' + name + '。电脑整理和小V核卷仍是后续步骤。';
-    if (uncertain) return '上传结果待核，照片仍保留。先查最近文件，不要重复上传。';
-    return '已拍 ' + count + ' 页，还没上传。请按「上传这份到 Drive」。';
+    if (saved) return 'Drive 收到了：' + name + '。（电脑整理、小V核卷是后面的事。）';
+    if (uncertain) return '上传结果还不确定，照片还在。先看「最近存的文件」，不要再上传一次。';
+    return '';
   }
   function syncUploadState_() {
-    $('uploadState').textContent = uploadStateText_(pages.length, uploadBusy,
-      !!lastSavedSignature && uploadSignature_() === lastSavedSignature, lastUploadedName, uploadUnknown);
+    var saved = uploaded_(), n = pages.length;
+    $('uploadState').textContent = uploadStateText_(n, uploadBusy, saved, lastUploadedName, uploadUnknown);
+    var m = $('make');            // v13 (测试报告 最痛 5): after a good upload the button turns grey 「✔ 已上传」 until a photo or the name changes
+    m.textContent = uploadBusy ? '上传中……' : saved ? '✔ 已上传' : '☁ 上传 ' + n + ' 张';
+    m.className = 'big' + (saved ? ' gone' : '');
+    m.disabled = uploadBusy || saved || !n;
+    show('afterUp', saved && !uploadBusy);
   }
   window.addEventListener('beforeunload', function(e) {
     if (pages.length && uploadSignature_() !== lastSavedSignature) { e.preventDefault(); e.returnValue = ''; }
   });
-  $('name').addEventListener('input', syncUploadState_);
-  $('pupil').addEventListener('input', syncUploadState_);
+  $('name').addEventListener('input', function () { syncUploadState_(); drawShoot(); });
+  $('pupil').addEventListener('input', function () { syncUploadState_(); drawShoot(); });
 
-  // ---------- 2-Nov: today's papers + class lists (Code.gs todayPapers <- the laptop's 09_扫描/_今天的卷.json) ----------
-  // File name = <paper_id>-<回头考|小测|加练>-<pupil or 多人>-<yyyymmdd>-原图.pdf; eval/reading/intake.py reads it back (NEW_NAME).
-  var TODAY = null, MULTI = '多人', TYPE = '__type__';
-  function ymd(d) { var p = function (x) { return ('0' + x).slice(-2); }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()); }
-  function picked() { var i = $('paperPick').value; return (TODAY && i !== '' && i !== TYPE) ? TODAY.papers[+i] : null; }
-  function namesFor(cls) {
-    var out = [], parts = (cls || '').match(/[SF][1-6]/g) || [];
-    parts.forEach(function (c) { (TODAY.classes[c] || []).forEach(function (n) { if (out.indexOf(n) < 0 && !(TODAY.paused || {})[n]) out.push(n); }); });
-    return out;
-  }
-  function pickedBase() {
-    var p = picked(); if (!p) return '';
-    return (p.paper_id + '-' + p.kind + '-' + ($('whoPick').value || MULTI) + '-' + ymd(new Date())).replace(/[\\/:*?"<>|]/g, '-');
-  }
-  // ---------- 5-Nov v9: pick by buttons. State lives in the (hidden) #paperPick / #whoPick, so pickedBase() and the file name are untouched. ----------
-  var GRADES = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'F1', 'F2', 'F3'], curGrade = '', whoChosen = false;
+  // ---------- helpers shared by every screen ----------
+  var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], WD = '日一二三四五六';
+  var GRADES = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'F1', 'F2', 'F3'];
   var SUBJ = { MA: '数学', SC: '科学', EN: '英文', BM: '马来文', HW: '华文', SEJ: '历史' };
-  var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  function gradesOf(p) { return (p.cls || '').match(/[SF][1-6]/g) || []; }      // a joint class (五六年级 / 中二中三) shows under each of its grades
-  function gradeName(g) { return ((PD || TODAY || {}).class_names || {})[g] || g; }
+  var XSUBJ = ['华文', '马来文', '英文', '数学', '科学', '历史', '作文'];
+  var MULTI = '多人', TYPE = '__type__', UNDO_MS = 10 * 60 * 1000;
+  function show(id, on) { $(id).classList.toggle('hidden', !on); }
+  var msgTimer = 0;
+  function say(text, kind) {          // v13 (合并通知): ONE message place for the whole app, just above the bottom button
+    var m = $('msg'); clearTimeout(msgTimer);
+    m.textContent = text || ''; m.className = kind || '';
+    if (text && !kind) msgTimer = setTimeout(function () { if (m.textContent === text) m.textContent = ''; }, 4000);
+  }
+  function ymd(d) { var p = function (x) { return ('0' + x).slice(-2); }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()); }
   function dayShort(iso) { var m = /^\d{4}-(\d\d)-(\d\d)$/.exec(iso || ''); return m ? (+m[2]) + '-' + MON[+m[1] - 1] : (iso || ''); }
+  function wdOf(iso) { var t = Date.parse(iso + 'T00:00:00Z'); return isNaN(t) ? '' : WD[new Date(t).getUTCDay()]; }
+  function gradesOf(p) { return (p.cls || '').match(/[SF][1-6]/g) || []; }      // a joint class (五六年级 / 中二中三) shows under each of its grades
+  function gradeName(g) { return ((PD || {}).class_names || {})[g] || g; }
   function subjectOf(p) {
     var pre = (p.paper_id || '').split('-')[0];
     if (p.kind === '回头考') return '';
@@ -246,292 +372,16 @@
     var m = /(数学|科学|英文|马来文|华文|历史|作文)/.exec(p.short || ''); return m ? m[1] : '';
   }
   function labelOf(p) { return (subjectOf(p) + ' ' + p.kind + ' ' + dayShort(p.date)).replace(/^ +/, ''); }
-  function extraOf(p) {     // only used when two different papers of one grade and day would get the same button text
-    var t = (p.short || '').replace(/(妈妈|晚上)/g, ' ');
-    if (subjectOf(p)) t = t.replace(subjectOf(p), ' ');
-    return (t.split(/\s+/).filter(Boolean)[0] || '').slice(0, 8);
-  }
-  function papersFor(g) {   // [{i, p, label}] : this grade, today first then the earlier days; the same paper_id + kind printed twice = one button
-    var out = [], seen = {};
-    TODAY.papers.forEach(function (p, i) {
-      if (gradesOf(p).indexOf(g) < 0) return;
-      var k = p.paper_id + '|' + p.kind + '|' + p.date; if (seen[k]) return; seen[k] = 1;
-      out.push({ i: i, p: p, label: labelOf(p) });
-    });
-    var cnt = {}; out.forEach(function (o) { var k = o.p.date + o.label; cnt[k] = (cnt[k] || 0) + 1; });
-    out.forEach(function (o) { if (cnt[o.p.date + o.label] > 1) o.label += ' · ' + (extraOf(o.p) || o.p.paper_id); });
-    return out;
-  }
-  function gradesWithPapers() { return GRADES.filter(function (g) { return TODAY.papers.some(function (p) { return gradesOf(p).indexOf(g) >= 0; }); }); }
-  function btn(text, cls, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = 'pk ' + cls; b.textContent = text; b.onclick = fn; return b; }
-  function drawPick() {
-    if (!TODAY) return;
-    var p = picked(), typing = $('paperPick').value === TYPE, list = $('pkList'), crumb = $('crumb');
-    var step = typing ? 'type' : p ? 'who' : curGrade ? 'paper' : 'grade';
-    var parts = [];
-    if (typing) parts.push('✍ 自己打字');
-    else { if (curGrade) parts.push(gradeName(curGrade)); if (p) parts.push(labelOf(p)); if (p && whoChosen) parts.push($('whoPick').value === MULTI ? '多人' : $('whoPick').value); }
-    crumb.textContent = parts.length ? parts.join(' › ') : '还没选。先按下面的年级。';
-    crumb.className = 'crumb' + (parts.length ? '' : ' empty');
-    show('pkBack', step !== 'grade');
-    $('pkTitle').textContent = { grade: '① 按年级', paper: '② 按卷', who: '③ 按谁的卷', type: '请在下面的框里打字' }[step];
-    list.innerHTML = '';
-    if (step === 'grade') {
-      gradesWithPapers().forEach(function (g) { list.appendChild(btn(gradeName(g), '', function () { curGrade = g; $('paperPick').value = ''; whoChosen = false; drawWho(); })); });
-      list.appendChild(btn('✍ 不在单子上（书 / 别的卷，自己打字）', 'ghost wide', function () { $('paperPick').value = TYPE; whoChosen = false; drawWho(); }));
-    } else if (step === 'paper') {
-      var lastHead = '';
-      papersFor(curGrade).forEach(function (o) {
-        var head = o.p.date === TODAY.date ? '今天 ' + dayShort(o.p.date) : '补交 · ' + dayShort(o.p.date) + ' 的卷';
-        if (head !== lastHead) { var h = document.createElement('div'); h.className = 'pkHead'; h.textContent = head; list.appendChild(h); lastHead = head; }
-        list.appendChild(btn(o.label, 'wide', function () { $('paperPick').value = String(o.i); $('whoPick').value = ''; whoChosen = false; drawWho(); }));
-      });
-    } else if (step === 'who') {
-      list.appendChild(btn('👥 多人（整班一起拍）', 'ghost wide' + (whoChosen && $('whoPick').value === MULTI ? ' on' : ''), function () { $('whoPick').value = MULTI; whoChosen = true; drawWho(); }));
-      namesFor(p.cls).forEach(function (n) {
-        list.appendChild(btn(n, 'ghost' + (whoChosen && $('whoPick').value === n ? ' on' : ''), function () { $('whoPick').value = n; whoChosen = true; drawWho(); }));
-      });
-    }
-  }
-  $('pkBack').onclick = function () {
-    if ($('paperPick').value === TYPE) { $('paperPick').value = ''; curGrade = ''; }
-    else if (picked()) { $('paperPick').value = ''; $('whoPick').value = ''; whoChosen = false; }
-    else curGrade = '';
-    drawWho();
-  };
-  function drawWho() {
-    var p = picked(), w = $('whoPick'), keep = w.value;
-    show('typeBox', !TODAY || $('paperPick').value === TYPE);
-    w.innerHTML = '';
-    if (p) {
-      var o = document.createElement('option'); o.value = MULTI; o.textContent = '多人'; w.appendChild(o);
-      namesFor(p.cls).forEach(function (n) { var x = document.createElement('option'); x.value = n; x.textContent = n; w.appendChild(x); });
-      if (keep && [].some.call(w.options, function (x) { return x.value === keep; })) w.value = keep;
-    }
-    $('pickName').textContent = (p && whoChosen) ? '文件名：' + pickedBase() + '-原图.pdf' : '';
-    try { localStorage.setItem('jrScanPaper', p ? p.paper_id + '|' + p.kind + '|' + p.date : ''); } catch (e) {}
-    drawPick();
-    syncUploadState_();
-  }
-  function drawPapers(data) {
-    TODAY = data && data.papers && data.papers.length ? data : null;
-    setProgData(data);                                   // 12-Nov v11: 「上到哪里」 also works when today's folder has no paper (timetable classes, old papers)
-    show('pickBox', !!TODAY); show('progOpen', !!PD);
-    if (!TODAY) { show('typeBox', true); return; }
-    var sel = $('paperPick'); sel.innerHTML = '';
-    var first = document.createElement('option'); first.value = ''; first.textContent = '-'; sel.appendChild(first);
-    TODAY.papers.forEach(function (p, i) { var o = document.createElement('option'); o.value = String(i); o.textContent = (p.cls_name || p.cls) + ' · ' + p.kind + (p.short ? ' · ' + p.short : ''); sel.appendChild(o); });
-    var t = document.createElement('option'); t.value = TYPE; t.textContent = 'type'; sel.appendChild(t);
-    curGrade = ''; whoChosen = false;
-    var last = ''; try { last = localStorage.getItem('jrScanPaper') || ''; } catch (e) {}
-    TODAY.papers.forEach(function (p, i) { if (last && p.paper_id + '|' + p.kind + '|' + p.date === last && gradesOf(p).length) { sel.value = String(i); curGrade = gradesOf(p)[0]; } });
-    drawWho();
-  }
-  // ---------- 14-Nov v12 up-to-where: ① 哪一天（上课那天）› ② 哪一班（照那天的时间表）› ③ 哪一份卷 › ④ 第几面 › 小测 › 存 ----------
-  // JR 14-Nov 11:5x「一份卷两班用…对每个科目都会有隐患」+ 12:0x「选日期，然后年级？然后课程」; Big C + 小V joint conclusion (Bus V001 / C003).
-  // Every press carries date (the LESSON day) + class_id/class_name (made by the laptop from the timetable; this page only copies them) + req.
-  // Progress shown per class: p.prog = {class_id or '?': {face, quiz, date}} from today_papers.py. Writes only through saveProgress().
-  var PD = null, PROGP = [];       // PD = the whole _今天的卷.json (also when TODAY is null); PROGP = papers + old_papers; pg.pi indexes PROGP
-  var pg = { on: false, step: 'day', date: '', cls: null, pi: -1, face: 0, quiz: '', done: '', bad: false, more: false, early: false, all: false, saving: false, req: '', xg: '' }, faceImgs = {};
-  var QUIZ = ['小测做了', '小测没做', '全部做完'], QUIZ_VAL = { '小测做了': '做了', '小测没做': '没做', '全部做完': '全部做完' };
-  var XSUBJ = ['华文', '马来文', '英文', '数学', '科学', '历史', '作文'];
-  function setProgData(data) {
-    var any = data && ((data.papers || []).length || (data.old_papers || []).length || (data.classes_today || []).length || (data.days || []).length);
-    PD = any ? data : null;
-    PROGP = PD ? (PD.papers || []).concat(PD.old_papers || []) : [];
-    if (PD && !PD.days) PD.days = [{ date: PD.date, wd: '', classes: (PD.classes_today || []).map(function (c) {   // a laptop list from before v12
-      var id = c.grades.join('') + '-' + c.subject + '-?'; return { id: id, name: c.grades.map(gradeName).join('') + ' · ' + c.subject, grades: c.grades, subject: c.subject, sure: c.sure }; }) }];
-  }
-  function newReq() { return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
-  function dayLabel(d) {
-    var n = Math.round((Date.parse(PD.date) - Date.parse(d.date)) / 86400000), w = d.wd ? '（' + d.wd + '）' : '';
-    return (n === 0 ? '今天 · ' : n === 1 ? '昨天 · ' : n === 2 ? '前天 · ' : '') + dayShort(d.date) + w;
-  }
-  function clsName(id) {       // a class id -> its name from any day in the list ('?' = an old press with no class)
-    if (id === '?') return '不知道哪班';
-    for (var i = 0; i < (PD.days || []).length; i++) for (var j = 0; j < PD.days[i].classes.length; j++) if (PD.days[i].classes[j].id === id) return PD.days[i].classes[j].name.split(' · ').slice(-1)[0];
-    return id.split('-').slice(-1)[0];
-  }
-  function progLine(pr) { return pr ? '到面 ' + pr.face + (pr.quiz === '全部做完' ? ' · 全部做完' : pr.quiz === '没做' ? ' · 小测没做' : pr.quiz === '做了' ? ' · 小测做了' : '') + '（' + dayShort(pr.date) + '）' : ''; }
-  function shared(p, c) { var g = gradesOf(p).filter(function (x) { return c.grades.indexOf(x) >= 0; }); return g.length ? g : c.grades.slice(); }
-  function pgPapers(c, d) {     // {day, olds, others, recs} for class c on lesson day d
-    var seen = {}, day = [], olds = [], others = [], recs = [];
-    PROGP.forEach(function (p, i) {
-      if (!gradesOf(p).some(function (g) { return c.grades.indexOf(g) >= 0; }) || p.date > d) return;
-      if (p.kind === '回头考') { if (p.date === d && !seen['r' + p.paper_id]) { seen['r' + p.paper_id] = 1; recs.push({ i: i, p: p }); } return; }
-      if (!p.faces || !p.faces.length || seen[p.paper_id]) return;
-      seen[p.paper_id] = 1;
-      var o = { i: i, p: p }, s = subjectOf(p), mine = (p.prog || {})[c.id];
-      var essay = c.subject === '作文' && (p.cls === c.grades.join('') || /作文|写作|WRITING|KARANGAN/i.test((p.short || '') + p.paper_id));
-      if (s && s !== c.subject && !essay) { if (!(mine && mine.quiz === '全部做完')) others.push(o); return; }   // 作文班 writes in 英文 / 马来文 (JR 2-Nov, 10-Nov): its own joint papers count whatever the subject
-      if (p.date === d) day.push(o);
-      else if (!(mine && mine.quiz === '全部做完')) olds.push(o);
-    });
-    var newest = function (a, b) { return a.p.date < b.p.date ? 1 : a.p.date > b.p.date ? -1 : a.i - b.i; };
-    olds.sort(newest); others.sort(newest);
-    return { day: day, olds: olds, others: others, recs: recs };
-  }
-  function progPaper() { return pg.pi >= 0 ? PROGP[pg.pi] : null; }
-  function progFace() { var p = progPaper(); return p ? p.faces.filter(function (f) { return f.n === pg.face; })[0] : null; }
-  function paperName(p) {   // for the 「记好了」 line only: subject + the first word after it, e.g. 历史 Bab1 · 科学 第2课 科学室规则
+  function paperName(p) {   // subject + the first word after it, e.g. 历史 Bab1 · 科学 第2课 科学室规则
     var sub = subjectOf(p), t = p.short || '', k = sub ? t.indexOf(sub) : -1;
     var rest = (k >= 0 ? t.slice(k + sub.length) : t).replace(/^[（(][^）)]*[）)]/, '').trim(), tok = rest.split(/\s+/).filter(Boolean);
     var name = (tok[0] || '').replace(/第\d+堂.*$/, '');
     if (/^第\d+课$/.test(name) && tok[1]) name += ' ' + tok[1];
-    return (sub + ' ' + name.slice(0, 14)).trim();
+    return (sub + ' ' + name.slice(0, 16)).trim();
   }
-  function pkHead(list, text, cls) { var h = document.createElement('div'); h.className = 'pkHead' + (cls ? ' ' + cls : ''); h.textContent = text; list.appendChild(h); }
-  function paperBtns(list, os) {     // one wide button per paper: name, then this class's place, then the other classes' places (each counted apart)
-    var cnt = {}, nm = function (p) { return labelOf(p) + (p.short ? ' · ' + paperName(p) : ''); };
-    os.forEach(function (o) { cnt[nm(o.p)] = (cnt[nm(o.p)] || 0) + 1; });
-    os.forEach(function (o) {
-      var p = o.p, pr = p.prog || {}, mine = pr[pg.cls.id];
-      var t = nm(p); if (cnt[t] > 1) t += ' · ' + p.paper_id.replace(/^[A-Z]+-[SF0-9]+-\d+-?/, '').slice(0, 14);   // two papers with the same words: add the end of the paper id
-      t += '\n这一班：' + (mine ? progLine(mine) : '还没按');
-      Object.keys(pr).filter(function (k) { return k !== pg.cls.id; }).forEach(function (k) { t += '\n' + clsName(k) + '：' + progLine(pr[k]) + '（分开算）'; });
-      list.appendChild(btn(t, 'wide two', function () { pg.pi = o.i; pg.face = 0; pg.quiz = ''; pg.step = 'face'; loadFaceImgs(p); drawProg(); }));
-    });
-  }
-  function recRow(list, o, many) {
-    var row = document.createElement('div'); row.className = 'recRow';
-    var t = document.createElement('div'); t.className = 'recTitle';
-    t.textContent = '回头考 ' + dayShort(o.p.date) + (many ? ' · ' + (o.p.short || o.p.paper_id).slice(0, 16) : '') + (o.p.rec_st ? ' ✔ 已记：' + o.p.rec_st : ''); row.appendChild(t);
-    var bs = document.createElement('div'); bs.className = 'recBtns';
-    ['做完', '一半', '没做'].forEach(function (st) { bs.appendChild(btn(st, 'ghost', function () { recSave(o, st); })); });
-    row.appendChild(bs); list.appendChild(row);
-  }
-  function drawProg() {
-    if (!PD) return;
-    var list = $('progList'), p = progPaper(), f = progFace(), parts = [];
-    if (pg.date) parts.push(dayShort(pg.date)); if (pg.cls) parts.push(pg.cls.name); if (p) parts.push(labelOf(p)); if (f) parts.push('面 ' + f.n); if (pg.quiz) parts.push(pg.quiz);
-    if (pg.step === 'text') parts.push('别的');
-    $('progCrumb').textContent = parts.length ? parts.join(' › ') : '📍 上到哪里：先按上课那一天。';
-    $('progCrumb').className = 'crumb' + (parts.length ? '' : ' empty');
-    $('progTitle').textContent = { day: '① 哪一天上的课？', 'class': '② 哪一班？（照那天的时间表）', xgrade: '② 时间表没有的班：哪一年级？', xsubj: '② 时间表没有的班：哪一科？', paper: '③ 哪一份卷？', face: '④ 做到哪一面？', quiz: '④ 小测呢？', text: '打一行字（别的）' }[pg.step];
-    $('progMsg').className = 'pgOk' + (pg.bad ? ' pgBad' : '');      // before show(): className would wipe its 'hidden'
-    $('progMsg').textContent = pg.done; show('progMsg', !!pg.done && pg.step === 'day');
-    show('progText', pg.step === 'text');
-    list.innerHTML = '';
-    if (pg.step === 'day') {
-      var ds = PD.days || [];
-      ds.slice(0, 3).forEach(function (d) { list.appendChild(btn(dayLabel(d), 'wide', function () { pg.date = d.date; pg.step = 'class'; pg.done = ''; drawProg(); })); });
-      if (ds.length > 3) {
-        list.appendChild(btn(pg.early ? '少看一点' : '更早 · 选日期（最多 14 天）', 'ghost wide', function () { pg.early = !pg.early; drawProg(); }));
-        if (pg.early) ds.slice(3).forEach(function (d) { list.appendChild(btn(dayLabel(d), 'wide', function () { pg.date = d.date; pg.step = 'class'; pg.done = ''; drawProg(); })); });
-      }
-      pkHead(list, '记的是上课那一天，不是你按的时间（今晚 11 点补按也算今天的课）。', 'soft');
-      list.appendChild(btn('✍ 别的（我打字）', 'ghost wide', function () { pg.date = PD.date; pg.cls = null; pg.step = 'text'; pg.done = ''; $('progText').value = ''; drawProg(); }));
-    } else if (pg.step === 'class') {
-      var day = (PD.days || []).filter(function (d) { return d.date === pg.date; })[0] || { classes: [] };
-      day.classes.forEach(function (c) { list.appendChild(btn(c.name + (c.sure ? '' : ' ？（时间表没核）'), 'wide', function () { pg.cls = c; pg.step = 'paper'; pg.all = false; pg.more = false; drawProg(); })); });
-      if (!day.classes.length) pkHead(list, '这一天时间表没有课。', 'soft');
-      list.appendChild(btn('时间表没有的班（按年级 + 科目）', 'ghost wide', function () { pg.step = 'xgrade'; drawProg(); }));
-      list.appendChild(btn('✍ 别的（我打字）', 'ghost wide', function () { pg.cls = null; pg.step = 'text'; $('progText').value = ''; drawProg(); }));
-    } else if (pg.step === 'xgrade') {
-      GRADES.forEach(function (g) { list.appendChild(btn(gradeName(g), '', function () { pg.xg = g; pg.step = 'xsubj'; drawProg(); })); });
-    } else if (pg.step === 'xsubj') {
-      XSUBJ.forEach(function (s) { list.appendChild(btn(s, '', function () {
-        pg.cls = { id: pg.xg + '-' + s + '-临时', name: gradeName(pg.xg) + ' · ' + s + ' · 时间表没有的班', grades: [pg.xg], subject: s, extra: true };
-        pg.step = 'paper'; pg.all = false; pg.more = false; drawProg(); })); });
-    } else if (pg.step === 'paper') {
-      var it = pgPapers(pg.cls, pg.date);
-      pkHead(list, '那天印的卷'); if (it.day.length) paperBtns(list, it.day); else pkHead(list, '那天夹里没有这一科的卷', 'soft');
-      if (it.olds.length) {
-        pkHead(list, '这一班这一科还没做完的卷' + (it.olds.length > 3 ? '（' + (pg.more ? '全部 ' : '先看 3 份，共 ') + it.olds.length + ' 份）' : ''));
-        paperBtns(list, pg.more ? it.olds : it.olds.slice(0, 3));
-        if (it.olds.length > 3) list.appendChild(btn(pg.more ? '少看一点' : '再看更多（还有 ' + (it.olds.length - 3) + ' 份）', 'ghost wide', function () { pg.more = !pg.more; drawProg(); }));
-      }
-      if (it.recs.length) { pkHead(list, '回头考 / 复习：做了没有？'); it.recs.forEach(function (o) { recRow(list, o, it.recs.length > 1); }); }
-      if (it.others.length) {
-        list.appendChild(btn(pg.all ? '收起别科的卷' : '这一年级别科的卷（' + it.others.length + ' 份）', 'ghost wide', function () { pg.all = !pg.all; drawProg(); }));
-        if (pg.all) paperBtns(list, it.others);
-      }
-      list.appendChild(btn('✍ 别的（我打字）', 'ghost wide', function () { pg.step = 'text'; $('progText').value = ''; drawProg(); }));
-    } else if (pg.step === 'face') {
-      var mine = (p.prog || {})[pg.cls.id];
-      if (mine) pkHead(list, '这一班上次：' + progLine(mine), 'soft');
-      if (pg.face) list.appendChild(btn('✔ 做到这一面（面 ' + pg.face + '）', 'wide go', function () { pg.step = 'quiz'; pg.quiz = ''; pg.req = newReq(); drawProg(); }));
-      var im = faceImgs[p.paper_id] || {};
-      p.faces.forEach(function (fc) {
-        var b = btn('', 'face ghost' + (pg.face === fc.n ? ' on' : ''), function () { pg.face = fc.n; drawProg(); });
-        if (im[fc.n]) { var i = document.createElement('img'); i.alt = ''; i.src = im[fc.n]; b.appendChild(i); }
-        var sp = document.createElement('span'); sp.textContent = '面 ' + fc.n + ' · ' + fc.title; b.appendChild(sp);
-        list.appendChild(b);
-      });
-    } else if (pg.step === 'quiz') {
-      QUIZ.forEach(function (q) { list.appendChild(btn(q, 'wide ghost' + (pg.quiz === q ? ' on' : ''), function () { pg.quiz = q; drawProg(); })); });
-      if (pg.quiz) { var sb = btn(pg.saving ? '存的时候稍等……' : '💾 存起来', 'wide go', progSave); sb.disabled = pg.saving; list.appendChild(sb); }
-    } else if (pg.step === 'text') {
-      var tb = btn(pg.saving ? '存的时候稍等……' : '💾 存起来', 'wide go', textSave); tb.disabled = pg.saving; list.appendChild(tb);
-    }
-  }
-  function loadFaceImgs(p) {
-    if (faceImgs[p.paper_id] !== undefined || !hasServer) return;
-    faceImgs[p.paper_id] = null;
-    run('faceThumbs', [pinValue, p.paper_id]).then(function (r) { faceImgs[p.paper_id] = r || {}; if (pg.on && pg.step === 'face') drawProg(); }).catch(function () { faceImgs[p.paper_id] = {}; });
-  }
-  function baseRec() {         // date + class for every press (v12)
-    var c = pg.cls; if (!c) return { date: pg.date, class_id: '没选班', class_name: '没选班', grades: [], subject: '' };
-    return { date: pg.date, class_id: c.id, class_name: c.name, grades: c.grades.slice(), subject: c.subject };
-  }
-  function progSent(text, r, want) {
-    pg.saving = false; pg.req = '';
-    pg.bad = !(r && typeof r === 'object' && r.date === want);   // a v11 Code.gs answers true and drops date + class: say so in red
-    pg.done = pg.bad ? '⚠ 存到了，可是存档程序还是旧的：日期和班没记到。跟大C讲一声。（' + text + '）' : '✔ 记好了：' + text;
-    pg.step = 'day'; pg.date = ''; pg.cls = null; pg.pi = -1; pg.face = 0; pg.quiz = ''; drawProg(); say('');
-    $('progLayer').scrollTop = 0;
-  }
-  function progFail(e) { pg.saving = false; drawProg(); say('没存到：' + e.message + '（再按一次）', 'bad'); alert('没存到：' + e.message); }
-  function progSave() {
-    var p = progPaper(), f = progFace(); if (!p || !f || !pg.quiz || pg.saving) return;
-    var rec = baseRec(); rec.grades = shared(p, pg.cls); rec.grade = rec.grades[0];
-    rec.paper_id = p.paper_id; rec.face = f.n; rec.face_title = f.title; rec.quiz = QUIZ_VAL[pg.quiz]; rec.paper_sha = p.sha || ''; rec.req = pg.req || (pg.req = newReq());
-    var text = dayShort(pg.date) + ' · ' + pg.cls.name + ' · ' + (paperName(p) || p.paper_id) + ' · 做到面 ' + f.n + ' · ' + pg.quiz, cid = pg.cls.id;
-    pg.saving = true; drawProg(); say('存的时候稍等……');
-    run('saveProgress', [pinValue, rec]).then(function (r) {
-      PROGP.forEach(function (q) {     // the same paper printed on two days = two entries: both show the new place at once
-        if (q.paper_id !== p.paper_id) return;
-        q.prog = q.prog || {}; var old = q.prog[cid];
-        if (!old || old.date <= rec.date) q.prog[cid] = { face: rec.face, quiz: rec.quiz, date: rec.date };
-      });
-      progSent(text, r, rec.date);
-    }).catch(progFail);
-  }
-  function recSave(o, status) {
-    if (pg.saving) return;
-    var rec = baseRec(); rec.grades = shared(o.p, pg.cls); rec.grade = rec.grades[0]; rec.kind = '回头考'; rec.paper_id = o.p.paper_id; rec.status = status; rec.req = newReq();
-    pg.saving = true; say('存的时候稍等……');
-    run('saveProgress', [pinValue, rec]).then(function (r) { o.p.rec_st = status; o.p.done = status === '做完'; progSent(dayShort(pg.date) + ' · ' + gradeName(rec.grade) + ' · 回头考 · ' + status, r, rec.date); }).catch(progFail);
-  }
-  function textSave() {
-    var t = $('progText').value.trim(); if (!t) { say('先打一行字。', 'bad'); return; }
-    if (pg.saving) return;
-    var rec = baseRec(); if (!pg.cls) { delete rec.class_id; delete rec.class_name; rec.class_id = '没选班'; rec.class_name = '没选班'; }
-    rec.grade = rec.grades[0] || ''; rec.kind = '别的'; rec.text = t; rec.req = pg.req || (pg.req = newReq());
-    pg.saving = true; drawProg(); say('存的时候稍等……');
-    run('saveProgress', [pinValue, rec]).then(function (r) { $('progText').value = ''; progSent(dayShort(pg.date) + ' · 别的 · ' + t.slice(0, 30), r, rec.date); }).catch(progFail);
-  }
-  $('progOpen').onclick = function () { pg.on = true; pg.step = 'day'; pg.date = ''; pg.cls = null; pg.pi = -1; pg.face = 0; pg.quiz = ''; pg.done = ''; pg.bad = false; pg.early = false; show('progLayer', true); drawProg(); $('progLayer').scrollTop = 0; };
-  $('progBack').onclick = function () {
-    if (pg.saving) return;
-    if (pg.step === 'day') { pg.on = false; show('progLayer', false); return; }
-    if (pg.step === 'class') { pg.step = 'day'; pg.date = ''; }
-    else if (pg.step === 'xgrade') pg.step = 'class';
-    else if (pg.step === 'xsubj') pg.step = 'xgrade';
-    else if (pg.step === 'paper') { pg.step = pg.cls && pg.cls.extra ? 'xsubj' : 'class'; pg.cls = null; }
-    else if (pg.step === 'face') { pg.step = 'paper'; pg.pi = -1; pg.face = 0; }
-    else if (pg.step === 'quiz') { pg.step = 'face'; pg.quiz = ''; }
-    else if (pg.step === 'text') { pg.step = pg.cls ? 'paper' : (pg.date && pg.date !== PD.date ? 'class' : 'day'); }
-    drawProg();
-  };
-  function loadToday() { if (hasServer) run('todayPapers', [pinValue]).then(drawPapers).catch(function () { drawPapers(null); }); }
-  window.__jrDrawPapers = drawPapers;   // local test only (tests/phone-375): feed a saved _今天的卷.json without Google
-  var MAX_SIDE = 2600;
-  var pinValue = '';
-  var sentAt = 0, sentBase = '';   // 21-Oct: when the last save was sent, and its name, to check Drive if the reply is unreadable
-
-  function show(id, on) { $(id).classList.toggle('hidden', !on); }
-  function say(text, kind) { var m = $('msg'); m.textContent = text; m.className = 'msg' + (kind ? ' ' + kind : ''); }
+  function btn(text, cls, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = cls || ''; b.textContent = text; b.onclick = fn; return b; }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function newReq() { return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
   function stamp() {
     var d = new Date(), p = function (x) { return ('0' + x).slice(-2); };
     return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());   // seconds: two saves in one minute get different names
@@ -555,24 +405,560 @@
     return new Promise(function (ok, bad) { var im = new Image(); im.onload = function () { ok(im); }; im.onerror = bad; im.src = src; });
   }
 
+  // ---------- slide-up panel: every question (v13: no browser confirm / alert boxes; 设计灵感 16-Oct 深色面板从底部滑上来) ----------
+  var sheetDone = null;
+  function sheet(title, text, choices) {     // choices = [{label, val, cls}] -> Promise(val | null)
+    if (sheetDone) sheetDone(null);
+    $('sheetTitle').textContent = title; $('sheetText').textContent = text || ''; show('sheetText', !!text);
+    var box = $('sheetBtns'); box.innerHTML = '';
+    return new Promise(function (ok) {
+      sheetDone = function (v) { sheetDone = null; $('sheet').classList.remove('on'); $('sheetBg').classList.remove('on'); setTimeout(function () { if (!sheetDone) { show('sheet', false); show('sheetBg', false); } }, 350); ok(v); };
+      choices.forEach(function (c) { box.appendChild(btn(c.label, c.cls || '', function () { if (sheetDone) sheetDone(c.val); })); });
+      show('sheet', true); show('sheetBg', true);
+      requestAnimationFrame(function () { requestAnimationFrame(function () { $('sheet').classList.add('on'); $('sheetBg').classList.add('on'); }); });
+    });
+  }
+  $('sheetBg').onclick = function () { if (sheetDone) sheetDone(null); };
+
+  // ---------- data: _今天的卷.json (Code.gs todayPapers <- laptop apps/scanner/today_papers.py) ----------
+  // File name = <paper_id>-<回头考|小测|加练>-<pupil or 多人>-<yyyymmdd>-原图.pdf; eval/reading/intake.py reads it back (NEW_NAME).
+  var PD = null, PROGP = [], TODAY = null;      // PD = the whole json; PROGP = papers + old_papers (paperPick and the class page index into it)
+  var PRESSED = {}, TAGGED = {};                // this phone, this visit: 'date|class_id' pressed · unknown photos already told
+  function setProgData(data) {
+    var any = data && ((data.papers || []).length || (data.old_papers || []).length || (data.classes_today || []).length || (data.days || []).length);
+    PD = any ? data : null;
+    TODAY = PD && (PD.papers || []).length ? PD : null;
+    PROGP = PD ? (PD.papers || []).concat(PD.old_papers || []) : [];
+    if (PD && !PD.days) PD.days = [{ date: PD.date, wd: '', classes: (PD.classes_today || []).map(function (c) {   // a laptop list from before v12
+      var id = c.grades.join('') + '-' + c.subject + '-?'; return { id: id, name: c.grades.map(gradeName).join('') + ' · ' + c.subject, grades: c.grades, subject: c.subject, sure: c.sure }; }) }];
+  }
+  function dayObj(date) { return ((PD && PD.days) || []).filter(function (d) { return d.date === date; })[0] || { date: date, wd: wdOf(date), classes: [] }; }
+  function clsShort(c) {       // 「三年级英文」 + 「下午班」
+    var parts = (c.name || '').split(' · ');
+    return { title: parts.slice(0, 2).join(''), sess: parts.slice(2).join(' ') };
+  }
+  function clsName(id) {       // a class id -> its name from any day in the list ('?' = an old press with no class)
+    if (id === '?') return '不知道哪班';
+    for (var i = 0; i < ((PD && PD.days) || []).length; i++) for (var j = 0; j < PD.days[i].classes.length; j++) if (PD.days[i].classes[j].id === id) { var s = clsShort(PD.days[i].classes[j]); return s.title + s.sess; }
+    return id.split('-').slice(0, 2).join('');
+  }
+  // v13 (规则乱 3): the face pressed is DONE: 「做完到第 6 面」 = faces 1-6 are finished.
+  function progLine(pr) { return pr ? '做完到第 ' + pr.face + ' 面' + (pr.quiz === '全部做完' ? ' · 整份做完' : pr.quiz === '没做' ? ' · 小测没做' : pr.quiz === '做了' ? ' · 小测做了' : '') + '（' + dayShort(pr.date) + '）' : ''; }
+  function shared(p, c) { var g = gradesOf(p).filter(function (x) { return c.grades.indexOf(x) >= 0; }); return g.length ? g : c.grades.slice(); }
+  function pgPapers(c, d) {     // {day, olds, others, recs} for class c on lesson day d (v12, unchanged)
+    var seen = {}, day = [], olds = [], others = [], recs = [];
+    PROGP.forEach(function (p, i) {
+      if (!gradesOf(p).some(function (g) { return c.grades.indexOf(g) >= 0; }) || p.date > d) return;
+      if (p.kind === '回头考') { if (p.date === d && !seen['r' + p.paper_id]) { seen['r' + p.paper_id] = 1; recs.push({ i: i, p: p }); } return; }
+      if (!p.faces || !p.faces.length || seen[p.paper_id]) return;
+      seen[p.paper_id] = 1;
+      var o = { i: i, p: p }, s = subjectOf(p), mine = (p.prog || {})[c.id];
+      var essay = c.subject === '作文' && (p.cls === c.grades.join('') || /作文|写作|WRITING|KARANGAN/i.test((p.short || '') + p.paper_id));
+      if (s && s !== c.subject && !essay) { if (!(mine && mine.quiz === '全部做完')) others.push(o); return; }   // 作文班 writes in 英文 / 马来文 (JR 2-Nov, 10-Nov)
+      if (p.date === d) day.push(o);
+      else if (!(mine && mine.quiz === '全部做完')) olds.push(o);
+    });
+    var newest = function (a, b) { return a.p.date < b.p.date ? 1 : a.p.date > b.p.date ? -1 : a.i - b.i; };
+    olds.sort(newest); others.sort(newest);
+    return { day: day, olds: olds, others: others, recs: recs };
+  }
+  function pressedOn(c, date) {
+    if (PRESSED[date + '|' + c.id]) return true;
+    return PROGP.some(function (p) { var r = (p.prog || {})[c.id]; return r && r.date === date; });
+  }
+
+  // ---------- screens ----------
+  var view = 'home', homeDate = '';
+  function go(v) {
+    view = v; show('vHome', v === 'home'); show('vClass', v === 'class'); show('vShoot', v === 'shoot');
+    if (v === 'home') drawHome(); else if (v === 'class') drawClass(); else drawShoot();
+    drawDock(); window.scrollTo(0, 0);
+  }
+  function drawDock() {
+    var b = $('dockBtn'), n = pages.length, left = n && !uploaded_();
+    show('dock', !!PD || view === 'shoot' || !TODAY);
+    if (view === 'home') { b.textContent = '📷 拍卷子' + (left ? '（' + n + ' 张还没上传）' : ''); b.disabled = false; }
+    else if (view === 'class') { b.textContent = '📷 拍这一班的卷' + (left ? '（' + n + ' 张）' : ''); b.disabled = false; }
+    else if (sStep === 1) { b.textContent = n ? '下一步：哪份卷 →' : '先拍照'; b.disabled = !n; }
+    else if (sStep === 2) { b.textContent = '下一步：上传 →'; b.disabled = !pickReady(); }
+    else show('dock', false);
+  }
+  $('dockBtn').onclick = function () {
+    if (view === 'home') { shootCls = null; shootDate = homeDate; openShoot(); }
+    else if (view === 'class') { shootCls = cc; shootDate = ccDate; openShoot(); }
+    else if (sStep === 1 && pages.length) { sStep = 2; drawShoot(); window.scrollTo(0, 0); }
+    else if (sStep === 2 && pickReady()) { sStep = 3; drawShoot(); window.scrollTo(0, 0); }
+  };
+
+  // ===== HOME = today's timetable (样子 B, JR 16-Nov) =====
+  function drawHome() {
+    if (!PD) {
+      $('homeDay').textContent = ''; $('homeTitle').textContent = 'JR 扫描'; $('tt').innerHTML = '';
+      show('ttEmpty', false); show('otherDay', false); show('extraCls', false); show('typeLine', false); show('homeBackToday', false); show('unkBox', false);
+      return;
+    }
+    if (!homeDate) homeDate = PD.date;
+    var d = dayObj(homeDate), today = homeDate === PD.date, wd = d.wd || wdOf(homeDate);
+    $('homeDay').textContent = dayShort(homeDate) + ' 星期' + wd;
+    $('homeTitle').textContent = (today ? '今天 ' : dayShort(homeDate) + ' ') + d.classes.length + ' 班';
+    show('homeBackToday', !today); show('otherDay', true); show('extraCls', true); show('typeLine', true);
+    var box = $('tt'); box.innerHTML = '';
+    d.classes.forEach(function (c) {
+      var s = clsShort(c), did = pressedOn(c, homeDate);
+      var r = btn('', 'ttRow', function () { openClass(c, homeDate); });
+      var nm = el('span', 'nm', s.title); nm.appendChild(el('small', '', s.sess + (c.sure ? '' : ' · 时间表没核')));
+      r.appendChild(nm); r.appendChild(el('span', 'chip ' + (did ? 'did' : 'wait'), did ? '按了 ✔' : '还没按'));
+      box.appendChild(r);
+    });
+    show('ttEmpty', !d.classes.length);
+    drawUnknown();
+  }
+  $('homeBackToday').onclick = function () { homeDate = PD.date; drawHome(); };
+  $('otherDay').onclick = function () {
+    var ds = (PD.days || []).filter(function (d) { return d.date !== homeDate; });
+    sheet('补按哪一天的课？', '记的是上课那一天，不是今天。最多 14 天。', ds.map(function (d) {
+      var n = Math.round((Date.parse(PD.date) - Date.parse(d.date)) / 86400000);
+      return { label: (n === 0 ? '今天 · ' : n === 1 ? '昨天 · ' : '') + dayShort(d.date) + ' 星期' + (d.wd || wdOf(d.date)) + ' · ' + (d.classes.length ? d.classes.length + ' 班' : '没有课'), val: d.date, cls: 'ghost' };
+    }).concat([{ label: '不用了', val: null, cls: 'ghost' }])).then(function (v) { if (v) { homeDate = v; drawHome(); window.scrollTo(0, 0); } });
+  };
+  $('extraCls').onclick = function () {
+    sheet('时间表没有的班：哪一年级？', '例如今天加课、换课。', GRADES.map(function (g) { return { label: gradeName(g), val: g, cls: 'ghost' }; }).concat([{ label: '不用了', val: null, cls: 'ghost' }])).then(function (g) {
+      if (!g) return;
+      return sheet(gradeName(g) + '：哪一科？', '', XSUBJ.map(function (s) { return { label: s, val: s, cls: 'ghost' }; })).then(function (s) {
+        if (!s) return;
+        openClass({ id: g + '-' + s + '-临时', name: gradeName(g) + ' · ' + s + ' · 时间表没有的班', grades: [g], subject: s, extra: true, sure: true }, homeDate);
+      });
+    });
+  };
+  $('typeLine').onclick = function () { show('textBox', true); $('progText').value = ''; $('progText').focus(); };
+  $('textCancel').onclick = function () { show('textBox', false); };
+  $('textSave').onclick = function () {
+    var t = $('progText').value.trim(); if (!t) { say('先打一行字。', 'bad'); return; }
+    var rec = { date: homeDate, class_id: '没选班', class_name: '没选班', grades: [], subject: '', grade: '', kind: '别的', text: t, req: newReq() };
+    $('textSave').disabled = true;
+    run('saveProgress', [pinValue, rec]).then(function (r) {
+      $('textSave').disabled = false; show('textBox', false);
+      say(r && r.date === rec.date ? '✔ 记好了：' + t.slice(0, 30) : '⚠ 存到了，可是存档程序还是旧的：日期没记到。跟大C讲一声。', r && r.date === rec.date ? 'ok' : 'bad');
+    }).catch(function (e) { $('textSave').disabled = false; say('没存到：' + e.message + '（再按一次）', 'bad'); });
+  };
+  $('recentBtn').onclick = function () { var on = $('recentBox').classList.contains('hidden'); show('recentBox', on); if (on) loadRecent(); };
+
+  // v13 (照片对按): photos the laptop could not read (typed names) are listed first; JR taps which paper it is.
+  var unkAll = false, unkOpen = false;
+  function drawUnknown() {
+    var list = ((PD && PD.unknown_scans) || []).filter(function (u) { return !TAGGED[u.file]; }), box = $('unkBox');
+    show('unkBox', !!list.length); if (!list.length) return;
+    box.innerHTML = '';
+    box.appendChild(btn('📷 ' + list.length + ' 张照片电脑认不出是哪份 ' + (unkOpen ? '▴' : '› 点这里'), 'link', function () { unkOpen = !unkOpen; drawUnknown(); }));
+    if (!unkOpen) return;
+    box.appendChild(el('p', 'note', '点「是哪份？」告诉电脑，它就会算进那份卷。'));
+    (unkAll ? list : list.slice(0, 3)).forEach(function (u) {
+      var r = el('div', 'unk'); r.appendChild(el('span', '', dayShort(u.date) + ' · ' + u.file.replace(/-原图\.pdf$/, '')));
+      r.appendChild(btn('是哪份？', '', function () { tagFlow(u.file, '', u.date); })); box.appendChild(r);
+    });
+    if (list.length > 3) box.appendChild(btn(unkAll ? '少看一点' : '还有 ' + (list.length - 3) + ' 张', 'link', function () { unkAll = !unkAll; drawUnknown(); }));
+  }
+  function guessGrade(name) {
+    var m = /([1-6])\s*年级/.exec(name); if (m) return 'S' + m[1];
+    m = /(?:\bf|form\s*|中)([1-3一二三])/i.exec(name); if (m) return 'F' + ({ '一': 1, '二': 2, '三': 3 }[m[1]] || m[1]);
+    return '';
+  }
+  function tagFlow(file, g, day) {
+    g = g === 'ask' ? '' : g || guessGrade(file);
+    if (!g) return sheet('这张是几年级的？', file.replace(/-原图\.pdf$/, ''), GRADES.map(function (x) { return { label: gradeName(x), val: x, cls: 'ghost' }; }).concat([{ label: '以后再说', val: null, cls: 'ghost' }])).then(function (x) { if (x) tagFlow(file, x, day); });
+    var seen = {}, opts = [];
+    PROGP.forEach(function (p) {
+      if (gradesOf(p).indexOf(g) < 0 || seen[p.paper_id] || (day && p.date > day)) return; seen[p.paper_id] = 1;   // printed on or before the photo's day
+      opts.push({ label: dayShort(p.date) + ' · ' + (p.kind === '回头考' ? '回头考 ' + (p.short || '').slice(0, 18) : paperName(p) || p.paper_id), val: p, cls: 'ghost', d: p.date });
+    });
+    opts.sort(function (a, b) { return a.d < b.d ? 1 : a.d > b.d ? -1 : 0; });
+    sheet('「' + file.replace(/-原图\.pdf$/, '') + '」是哪份卷？', gradeName(g) + '的卷，' + (day ? dayShort(day) + ' 以前印的，' : '') + '最新的在上面。', opts.slice(0, 14).concat([{ label: '换年级', val: 'grade', cls: 'ghost' }, { label: '以后再说', val: null, cls: 'ghost' }])).then(function (p) {
+      if (p === 'grade') { tagFlow(file, 'ask', day); return; }
+      if (!p) return;
+      var kind = p.kind === '回头考' ? '回头考' : '小测';
+      say('存的时候稍等……');
+      run('tagScan', [pinValue, file, p.paper_id, kind]).then(function () { TAGGED[file] = 1; drawUnknown(); say('✔ 记好了：这张是 ' + (paperName(p) || p.paper_id), 'ok'); })
+        .catch(function (e) { say('没存到：' + e.message, 'bad'); });
+    });
+  }
+
+  // ===== CLASS: how far it got (v13: faces 1-12 on one screen, 小测 and 这份卷 asked apart, cancel within 10 minutes) =====
+  var cc = null, ccDate = '', openPi = -1, pe = null, recSel = {}, moreOld = false, showOthers = false, lastSaved = null, clsNote = null, faceImgs = {};
+  function openClass(c, date) { cc = c; ccDate = date; openPi = -1; pe = null; recSel = {}; moreOld = false; showOthers = false; clsNote = null;
+    var it = pgPapers(c, date), own = it.day.filter(function (o) { return o.p.cls === c.grades.join(''); });
+    if (own.length === 1) openPaper(own[0].i); else if (it.day.length === 1) openPaper(it.day[0].i);   // this class's one paper that day: open it straight away
+    go('class'); }
+  function openPaper(i) { openPi = i; pe = { face: 0, whole: '还没完', ask: false }; loadFaceImgs(PROGP[i]); }
+  function photoAfter(p, kind, d) { return ((p.photos || {})[kind] || []).filter(function (x) { return x >= d; })[0] || ''; }
+  function drawClass() {
+    if (!cc) return;
+    var s = clsShort(cc);
+    $('clsTitle').textContent = s.title + ' ' + s.sess;
+    $('clsSub').textContent = dayShort(ccDate) + ' 星期' + (dayObj(ccDate).wd || wdOf(ccDate)) + (ccDate === PD.date ? '（今天）' : '') + (cc.sure === false ? ' · 时间表没核' : '');
+    drawDoneBox();
+    var list = $('clsList'); list.innerHTML = '';
+    var it = pgPapers(cc, ccDate);
+    if (it.day.length) { list.appendChild(el('div', 'sect', ccDate === PD.date ? '今天印的卷' : '那天印的卷')); it.day.forEach(function (o) { paperCard(list, o); }); }
+    if (it.recs.length) { list.appendChild(el('div', 'sect', '回头考 / 复习')); it.recs.forEach(function (o) { recCard(list, o); }); }
+    if (it.olds.length) {
+      list.appendChild(el('div', 'sect', '这一班还没做完的旧卷'));
+      (moreOld ? it.olds : it.olds.slice(0, 2)).forEach(function (o) { paperCard(list, o); });
+      if (it.olds.length > 2) list.appendChild(btn(moreOld ? '少看一点' : '再看 ' + (it.olds.length - 2) + ' 份旧卷', 'link', function () { moreOld = !moreOld; drawClass(); }));
+    }
+    if (it.others.length) {
+      list.appendChild(btn(showOthers ? '收起别科的卷' : '这一年级别科的卷（' + it.others.length + ' 份）', 'link', function () { showOthers = !showOthers; drawClass(); }));
+      if (showOthers) it.others.forEach(function (o) { paperCard(list, o); });
+    }
+    if (!it.day.length && !it.recs.length && !it.olds.length) list.appendChild(el('p', 'sub', '这一班那天没有卷。按下面「拍这一班的卷」，或回课表按「✍ 别的」打一行字。'));
+    list.appendChild(el('p', 'note', '这里只记「' + s.title + s.sess + '」。同一份卷别的班也用，进那一班自己按；两班各记各的，不会互相盖掉。'));
+  }
+  function drawDoneBox() {
+    var box = $('clsDone'); box.innerHTML = '';
+    var L = lastSaved && lastSaved.key === cc.id + '|' + ccDate ? lastSaved : null;
+    if (L) {
+      var b = el('div', 'ok' + (L.bad ? ' badBox' : ''), (L.bad ? '⚠ 存到了，可是存档程序还是旧的：日期和班没记到。跟大C讲一声。\n' : '✔ 记好了：') + L.text);
+      var left = UNDO_MS - (Date.now() - L.t);
+      if (left > 0) b.appendChild(btn('按错了，取消这一条（' + Math.max(1, Math.ceil(left / 60000)) + ' 分钟内）', 'link', undoLast));
+      box.appendChild(b);
+    } else if (clsNote) box.appendChild(el('div', 'ok', clsNote));
+  }
+  setInterval(function () { if (view === 'class' && lastSaved) drawDoneBox(); }, 30000);
+  function paperCard(list, o) {
+    var p = o.p, pr = p.prog || {}, mine = pr[cc.id], open = openPi === o.i;
+    var card = el('div', 'paper' + (open ? ' open' : ''));
+    var head = btn('', 'pHead', function () { if (openPi === o.i) { openPi = -1; pe = null; } else openPaper(o.i); drawClass(); });
+    head.appendChild(document.createTextNode(paperName(p) || labelOf(p)));
+    var st = '这一班：' + (mine ? progLine(mine) : '还没按');
+    Object.keys(pr).filter(function (k) { return k !== cc.id; }).forEach(function (k) { st += '\n' + clsName(k) + '：' + progLine(pr[k]) + '（各记各的）'; });
+    head.appendChild(el('span', 'st', dayShort(p.date) + ' 印 · ' + st));
+    var ph = (p.photos || {})['小测'] || [];
+    if (ph.length) head.appendChild(el('span', 'ph', '📷 ' + ph.slice(0, 2).map(dayShort).join('、') + ' 小测照片收到了'));
+    card.appendChild(head);
+    if (open && pe) card.appendChild(paperBody(p, mine));
+    list.appendChild(card);
+  }
+  function paperBody(p, mine) {
+    var body = el('div', 'pBody'), faces = p.faces || [], maxF = faces.length ? faces[faces.length - 1].n : 0;
+    var q = el('div', 'q', '做完到第几面？'); q.appendChild(el('small', '', '  按最后做完的那一面')); body.appendChild(q);
+    var grid = el('div', 'faces');
+    faces.forEach(function (fc) {
+      grid.appendChild(btn(String(fc.n), (mine && fc.n <= mine.face ? 'past' : '') + (pe.face === fc.n ? ' on' : ''), function () { pe.face = fc.n; pe.ask = false; drawClass(); }));
+    });
+    body.appendChild(grid);
+    var info = el('div', 'faceInfo'), f = faces.filter(function (x) { return x.n === pe.face; })[0], im = faceImgs[p.paper_id] || {};
+    if (f) {
+      if (im[f.n]) { var i = el('img'); i.src = im[f.n]; i.alt = ''; i.onclick = function () { openFaceViewer(p, f.n); }; info.appendChild(i); }
+      info.appendChild(el('span', '', '第 ' + f.n + ' 面：' + f.title + (im[f.n] ? '（点小图看大）' : '')));
+    } else info.appendChild(el('span', '', mine ? '划掉的 = 上次已经做完的面。' : ''));
+    body.appendChild(info);
+    body.appendChild(el('div', 'q', '这份卷'));
+    var seg = el('div', 'seg');
+    ['还没完', '全部做完'].forEach(function (w) { seg.appendChild(btn(w, pe.whole === w ? 'on' : '', function () { pe.whole = w; pe.ask = false; if (w === '全部做完' && !pe.face) pe.face = maxF; drawClass(); })); });
+    body.appendChild(seg);
+    if (!pe.face) { body.appendChild(el('p', 'note', '先按做完到第几面，再按存起来。')); return body; }
+    if (pe.ask) {
+      var a = el('div', 'ask', '电脑已经收到 ' + dayShort(pe.ask) + ' 这份卷的小测照片。小测真的没做？');
+      var r = el('div', 'saveRow');
+      r.appendChild(btn('改成：小测做了 · 存', '', function () { faceSave(p, '做了'); }));
+      r.appendChild(btn('没错，没做 · 存', 'ghost', function () { faceSave(p, '没做', true); }));
+      a.appendChild(r); body.appendChild(a); return body;
+    }
+    body.appendChild(el('div', 'q', pe.whole === '全部做完' ? '整份做完（小测也做了）' : '小测呢？'));
+    var row = el('div', 'saveRow');
+    if (pe.whole === '全部做完') row.appendChild(btn('✔ 整份做完 · 存起来', 'one', function () { faceSave(p, '全部做完'); }));
+    else { row.appendChild(btn('小测做了 · 存起来', '', function () { faceSave(p, '做了'); })); row.appendChild(btn('小测没做 · 存起来', '', function () { faceSave(p, '没做'); })); }
+    body.appendChild(row);
+    return body;
+  }
+  function baseRec() { return { date: ccDate, class_id: cc.id, class_name: cc.name, grades: cc.grades.slice(), subject: cc.subject }; }
+  var saving = false;
+  function saved_(rec, r, text, restore) {
+    saving = false;
+    var bad = !(r && typeof r === 'object' && r.date === rec.date);   // a v11 Code.gs answers true and drops date + class: say so in red
+    PRESSED[ccDate + '|' + cc.id] = 1;
+    lastSaved = { key: cc.id + '|' + ccDate, req: rec.req, t: Date.now(), text: text, bad: bad, restore: restore };
+    clsNote = null; openPi = -1; pe = null; recSel = {};
+    say(''); drawClass(); window.scrollTo(0, 0);
+  }
+  function failed_(e) { saving = false; say('没存到：' + e.message + '（再按一次）', 'bad'); drawClass(); }
+  function faceSave(p, quiz, sure) {
+    if (saving) return;
+    var ph = photoAfter(p, '小测', ccDate);
+    if (quiz === '没做' && ph && !sure) { pe.ask = ph; drawClass(); return; }      // v13 照片对按: a quiz photo arrived, yet 「没做」 -> ask once
+    var f = (p.faces || []).filter(function (x) { return x.n === pe.face; })[0]; if (!f) return;
+    var rec = baseRec(); rec.grades = shared(p, cc); rec.grade = rec.grades[0];
+    rec.paper_id = p.paper_id; rec.face = f.n; rec.face_title = f.title; rec.quiz = quiz; rec.paper_sha = p.sha || ''; rec.req = newReq();
+    var text = (paperName(p) || p.paper_id) + ' · 做完到第 ' + f.n + ' 面 · ' + (quiz === '全部做完' ? '整份做完' : quiz === '做了' ? '小测做了' : '小测没做');
+    saving = true; say('存的时候稍等……');
+    var cid = cc.id, before = PROGP.map(function (q) { return q.paper_id === p.paper_id ? [q, (q.prog || {})[cid]] : null; }).filter(Boolean);
+    run('saveProgress', [pinValue, rec]).then(function (r) {
+      before.forEach(function (b) { var q = b[0], old = b[1]; q.prog = q.prog || {}; if (!old || old.date <= rec.date) q.prog[cid] = { face: rec.face, quiz: rec.quiz, date: rec.date }; });
+      saved_(rec, r, text, function () { before.forEach(function (b) { if (b[1]) b[0].prog[cid] = b[1]; else delete b[0].prog[cid]; }); });
+    }).catch(failed_);
+  }
+  function recCard(list, o) {
+    var p = o.p, sel = recSel[p.paper_id] || '', card = el('div', 'paper open');
+    var head = el('div', 'pHead'); head.appendChild(document.createTextNode('回头考 ' + dayShort(p.date) + ' · ' + (p.short || p.paper_id).slice(0, 22)));
+    var ph = (p.photos || {})['回头考'] || [];
+    head.appendChild(el('span', 'st', p.rec_st ? '已记：' + p.rec_st : ph.length ? '' : '还没按'));
+    if (ph.length) head.appendChild(el('span', 'ph', '📷 ' + dayShort(ph[0]) + ' 照片收到了 → 电脑当「做完」' + (p.rec_st ? '' : '（不对才按下面）')));
+    card.appendChild(head);
+    var body = el('div', 'pBody'), bs = el('div', 'recBtns');
+    ['做完', '一半', '没做'].forEach(function (st) { bs.appendChild(btn(st, sel === st ? 'on' : '', function () { recSel[p.paper_id] = st; drawClass(); })); });
+    body.appendChild(bs);
+    if (sel) { var r = el('div', 'saveRow'); r.appendChild(btn('回头考「' + sel + '」· 存起来', 'one', function () { recSave(o, sel); })); body.appendChild(r); }   // v13: pressed = chosen; 存 asks it once
+    card.appendChild(body); list.appendChild(card);
+  }
+  function recSave(o, status) {
+    if (saving) return;
+    var rec = baseRec(); rec.grades = shared(o.p, cc); rec.grade = rec.grades[0]; rec.kind = '回头考'; rec.paper_id = o.p.paper_id; rec.status = status; rec.req = newReq();
+    saving = true; say('存的时候稍等……');
+    var old = [o.p.rec_st, o.p.done];
+    run('saveProgress', [pinValue, rec]).then(function (r) {
+      o.p.rec_st = status; o.p.done = status === '做完';
+      saved_(rec, r, '回头考 ' + dayShort(o.p.date) + ' · ' + status, function () { o.p.rec_st = old[0]; o.p.done = old[1]; });
+    }).catch(failed_);
+  }
+  function undoLast() {
+    var L = lastSaved; if (!L || Date.now() - L.t > UNDO_MS || saving) return;
+    saving = true; say('取消中……');
+    run('undoProgress', [pinValue, L.req]).then(function () {
+      saving = false; if (L.restore) L.restore(); lastSaved = null;
+      var s = cc ? clsShort(cc) : null;
+      clsNote = '↩ 取消了：' + L.text + '。现在可以重新按。';
+      if (cc && !PROGP.some(function (p) { var r = (p.prog || {})[cc.id]; return r && r.date === ccDate; })) delete PRESSED[ccDate + '|' + cc.id];
+      say(''); drawClass();
+    }).catch(function (e) { saving = false; say('取消不到：' + e.message, 'bad'); });
+  }
+  $('clsBack').onclick = function () { homeDate = ccDate; go('home'); };
+  function loadFaceImgs(p) {
+    if (!p || faceImgs[p.paper_id] !== undefined || !hasServer) return;
+    faceImgs[p.paper_id] = null;
+    run('faceThumbs', [pinValue, p.paper_id]).then(function (r) { faceImgs[p.paper_id] = r || {}; if (view === 'class') drawClass(); }).catch(function () { faceImgs[p.paper_id] = {}; });
+  }
+  function openFaceViewer(p, n) {
+    var im = faceImgs[p.paper_id] || {}, list = (p.faces || []).filter(function (f) { return im[f.n]; });
+    openViewer(list.map(function (f) { return { src: im[f.n], title: '第 ' + f.n + ' 面' }; }), Math.max(0, list.map(function (f) { return f.n; }).indexOf(n)), false);
+  }
+
+  // ===== SHOOT: ① 拍照 › ② 哪份卷 › ③ 上传 (one step per screen) =====
+  var sStep = 1, shootCls = null, shootDate = '', pkStep = '', curGrade = '', whoChosen = false;
+  function openShoot() {
+    sStep = 1;
+    if (shootCls && !picked()) { pkStep = 'cls'; }
+    go('shoot');
+  }
+  function picked() { var i = $('paperPick').value; return (PROGP.length && i !== '' && i !== TYPE) ? PROGP[+i] || null : null; }
+  function typing() { return !TODAY || $('paperPick').value === TYPE; }
+  function pickReady() { return typing() || (!!picked() && whoChosen); }
+  function namesFor(cls) {
+    var out = [], parts = (cls || '').match(/[SF][1-6]/g) || [];
+    parts.forEach(function (c) { ((PD || {}).classes || {})[c] && PD.classes[c].forEach(function (n) { if (out.indexOf(n) < 0 && !(PD.paused || {})[n]) out.push(n); }); });
+    return out;
+  }
+  function pickedBase() {
+    var p = picked(); if (!p) return '';
+    return (p.paper_id + '-' + p.kind + '-' + ($('whoPick').value || MULTI) + '-' + ymd(new Date())).replace(/[\\/:*?"<>|]/g, '-');
+  }
+  function setWho(n) {          // the hidden select is the state store (file-name rule unchanged since v8); a typed name gets its own option
+    var w = $('whoPick');
+    if (n && ![].some.call(w.options, function (x) { return x.value === n; })) { var o = document.createElement('option'); o.value = n; o.textContent = n; w.appendChild(o); }
+    w.value = n || ''; whoChosen = !!n;
+  }
+  function setPaper(i) {
+    $('paperPick').value = i === '' ? '' : String(i); setWho(''); show('pupilType', false);
+    var p = picked(); try { localStorage.setItem('jrScanPaper', p ? p.paper_id + '|' + p.kind + '|' + p.date : ''); } catch (e) {}
+  }
+  function papersFor(g) {   // [{i, p, label}] : this grade, newest day first; the same paper_id + kind printed twice = one button
+    var out = [], seen = {};
+    PROGP.forEach(function (p, i) {
+      if (gradesOf(p).indexOf(g) < 0) return;
+      var k = p.paper_id + '|' + p.kind; if (seen[k]) return; seen[k] = 1;
+      out.push({ i: i, p: p, label: labelOf(p) + (p.short ? ' · ' + (p.kind === '回头考' ? p.short.slice(0, 14) : paperName(p)) : '') });
+    });
+    out.sort(function (a, b) { return a.p.date < b.p.date ? 1 : a.p.date > b.p.date ? -1 : a.i - b.i; });
+    return out;
+  }
+  function gradesWithPapers() { return GRADES.filter(function (g) { return PROGP.some(function (p) { return gradesOf(p).indexOf(g) >= 0; }); }); }
+  function drawShoot() {
+    if (view !== 'shoot') return;
+    ['st1', 'st2', 'st3'].forEach(function (id, k) { $(id).className = (sStep === k + 1 ? 'on' : '') + (k === 0 && pages.length || k === 1 && pickReady() ? ' did' : ''); });
+    show('s1', sStep === 1); show('s2', sStep === 2); show('s3', sStep === 3);
+    show('clear', sStep === 1 && pages.length > 0); show('pagesHint', pages.length > 0);
+    if (sStep !== 1 && $('msg').className === 'bad' && /红框/.test($('msg').textContent)) say('');
+    if (sStep === 2) drawPick();
+    if (sStep === 3) drawUp();
+    drawDock();
+  }
+  $('st1').onclick = function () { sStep = 1; drawShoot(); };
+  $('st2').onclick = function () { if (pages.length) { sStep = 2; drawShoot(); } };
+  $('st3').onclick = function () { if (pages.length && pickReady()) { sStep = 3; drawShoot(); } };
+  $('shootBack').onclick = function () { if (sStep > 1) { sStep--; drawShoot(); } else go(shootCls ? 'class' : 'home'); };
+  function pkBtn(list, text, cls, fn) { list.appendChild(btn(text, 'pk ' + (cls || ''), fn)); }
+  function drawPick() {
+    var list = $('pkList'); list.innerHTML = ''; show('typeBox', typing()); show('pickBox', !!TODAY);
+    if (!TODAY) return;
+    var p = picked();
+    if ($('paperPick').value === TYPE) { $('pkTitle').textContent = '不在单子上：在下面打字'; pkBtn(list, '← 回去按卷', 'wide', function () { setPaper(''); pkStep = shootCls ? 'cls' : 'grade'; drawShoot(); }); return; }
+    if (p) {             // ③ whose paper
+      $('pkTitle').textContent = '谁的卷？（' + (paperName(p) || labelOf(p)) + '）';
+      pkBtn(list, '← 换一份卷', 'wide', function () { setPaper(''); drawShoot(); });
+      pkBtn(list, '👥 多人（整班一起拍）', 'wide' + ($('whoPick').value === MULTI && whoChosen ? ' on' : ''), function () { setWho(MULTI); sStep = 3; drawShoot(); });
+      namesFor(p.cls).forEach(function (n) { pkBtn(list, n, $('whoPick').value === n && whoChosen ? 'on' : '', function () { setWho(n); sStep = 3; drawShoot(); }); });
+      pkBtn(list, '✍ 名字不在单子上（卷还是这份）', 'wide', function () { show('pupilType', true); $('pupilType').value = ''; $('pupilType').focus(); });
+      if (!$('pupilType').classList.contains('hidden')) pkBtn(list, '用这个名字 →', 'wide on', function () { var n = $('pupilType').value.trim().replace(/[\\/:*?"<>|]/g, ''); if (!n) { say('先打名字。', 'bad'); return; } setWho(n); sStep = 3; drawShoot(); });
+      return;
+    }
+    if (pkStep === 'cls' && shootCls) {     // came from a class: only that class's papers
+      var it = pgPapers(shootCls, shootDate || PD.date), s = clsShort(shootCls);
+      $('pkTitle').textContent = '哪份卷？（' + s.title + s.sess + '）';
+      it.day.concat(it.recs, it.olds.slice(0, 4)).forEach(function (o) {
+        pkBtn(list, (o.p.kind === '回头考' ? '回头考 ' + dayShort(o.p.date) + ' · ' + (o.p.short || '').slice(0, 14) : (paperName(o.p) || labelOf(o.p)) + ' · ' + dayShort(o.p.date) + ' 印'), 'wide', function () { setPaper(o.i); drawShoot(); });
+      });
+      pkBtn(list, '别的卷（按年级找）', 'wide', function () { pkStep = 'grade'; curGrade = ''; drawShoot(); });
+    } else if (!curGrade) {
+      $('pkTitle').textContent = '哪一年级的卷？';
+      gradesWithPapers().forEach(function (g) { pkBtn(list, gradeName(g), '', function () { curGrade = g; drawShoot(); }); });
+    } else {
+      $('pkTitle').textContent = gradeName(curGrade) + '：哪份卷？（新的在上面）';
+      pkBtn(list, '← 换年级', 'wide', function () { curGrade = ''; drawShoot(); });
+      var last = '';
+      papersFor(curGrade).forEach(function (o) {
+        var h = o.p.date === PD.date ? '今天 ' + dayShort(o.p.date) : dayShort(o.p.date) + ' 印的';
+        if (h !== last) { list.appendChild(el('div', 'pkHead', h)); last = h; }
+        pkBtn(list, o.label, 'wide', function () { setPaper(o.i); drawShoot(); });
+      });
+    }
+    pkBtn(list, '✍ 不在单子上（书 / 别的卷，自己打字）', 'wide', function () { $('paperPick').value = TYPE; setWho(''); drawShoot(); });
+  }
+  $('pupilType').addEventListener('input', function () { /* the 「用这个名字」 button is drawn once the box shows */ });
+  function drawUp() {
+    var p = picked(), who = $('whoPick').value, n = pages.length;
+    if (p) {
+      $('whoBig').innerHTML = '';
+      $('whoBig').appendChild(document.createTextNode('这是 ')); $('whoBig').appendChild(el('b', '', who === MULTI ? '全班（多人）' : who)); $('whoBig').appendChild(document.createTextNode(' 的卷'));
+      $('whoPaper').textContent = (paperName(p) || labelOf(p)) + ' · ' + labelOf(p) + ' · ' + n + ' 张';
+      $('pickName').textContent = '文件名：' + pickedBase() + '-原图.pdf';
+    } else {
+      var pu = $('pupil').value.trim();
+      $('whoBig').textContent = pu ? '这是 ' + pu + ' 的卷' : '这份没有学生名字';
+      $('whoPaper').textContent = ($('name').value.trim() || '（还没打名字）') + ' · ' + n + ' 张';
+      $('pickName').textContent = '';
+    }
+    syncUploadState_();
+  }
+  function resetPhotos(keepPaper) {
+    pages = []; lastSavedSignature = ''; lastUploadedName = ''; uploadUnknown = false;
+    $('links').innerHTML = ''; setWho(''); $('pupil').value = ''; show('pupilType', false);
+    if (!keepPaper) { setPaper(''); curGrade = ''; }
+    $('name').value = savedName() || '扫描-' + stamp();
+    if (!liveOK) $('camBtn').firstChild.nodeValue = '📷 拍一页';
+    drawPages();
+  }
+  $('nextPupil').onclick = function () { resetPhotos(true); sStep = 1; drawShoot(); window.scrollTo(0, 0); say('照片和名字清掉了，卷还是同一份。拍下一个学生。'); };
+  $('finishUp').onclick = function () { resetPhotos(false); go(shootCls ? 'class' : 'home'); };
+
+  // ===== full-screen photo: pinch, double tap, swipe (v13 测试报告 最痛 1) =====
+  var VW = { items: [], i: 0, tools: false, base: 1, s: 1, tx: 0, ty: 0, pts: {}, pinch: null, st: null, lastTap: 0 };
+  function openViewer(items, i, tools) {
+    if (!items.length) return;
+    VW.items = items; VW.tools = tools; show('vw', true); show('vwBot', tools); document.body.style.overflow = 'hidden'; vwShow(i);
+  }
+  function vwShow(i) {
+    VW.i = Math.max(0, Math.min(VW.items.length - 1, i));
+    var it = VW.items[VW.i], t = $('vwTitle'); t.textContent = (it.title || '') + '  ' + (VW.i + 1) + ' / ' + VW.items.length;
+    if (it.warn) { var w = el('i', '', '  ⚠ ' + it.warn); t.appendChild(w); }
+    $('vwLeft').disabled = VW.i === 0;
+    var img = $('vwImg'); img.style.visibility = 'hidden';
+    Promise.resolve(typeof it.src === 'function' ? it.src() : it.src).then(function (url) {
+      if (VW.items[VW.i] !== it) return;
+      img.onload = function () { vwFit(); img.style.visibility = ''; }; img.src = url;
+    });
+  }
+  function vwFit() {
+    var im = $('vwImg'), W = innerWidth, H = innerHeight, top = 64, bot = VW.tools ? 80 : 12;
+    VW.base = Math.min(W / im.naturalWidth, (H - top - bot) / im.naturalHeight); VW.s = 1;
+    VW.tx = (W - im.naturalWidth * VW.base) / 2; VW.ty = top + ((H - top - bot) - im.naturalHeight * VW.base) / 2; vwApply();
+  }
+  function vwApply() { $('vwImg').style.transform = 'translate(' + VW.tx + 'px,' + VW.ty + 'px) scale(' + (VW.base * VW.s) + ')'; }
+  function vwZoomAt(cx, cy, s) { s = Math.max(1, Math.min(6, s)); var k = s / VW.s; VW.tx = cx - (cx - VW.tx) * k; VW.ty = cy - (cy - VW.ty) * k; VW.s = s; if (s === 1) vwFit(); else vwApply(); }
+  function vwClose() { show('vw', false); document.body.style.overflow = ''; VW.items = []; }
+  var vw = $('vw');
+  function inBars(e) { return e.target.closest && e.target.closest('#vwTop,#vwBot'); }
+  vw.addEventListener('pointerdown', function (e) {
+    if (inBars(e)) return; VW.pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var ids = Object.keys(VW.pts);
+    if (ids.length === 2) { var a = VW.pts[ids[0]], b = VW.pts[ids[1]]; VW.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), s: VW.s }; VW.st = null; }
+    else if (ids.length === 1) VW.st = { x: e.clientX, y: e.clientY, tx: VW.tx, ty: VW.ty, t: Date.now() };
+    e.preventDefault();
+  });
+  vw.addEventListener('pointermove', function (e) {
+    if (!VW.pts[e.pointerId]) return; VW.pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var ids = Object.keys(VW.pts);
+    if (ids.length === 2 && VW.pinch) { var a = VW.pts[ids[0]], b = VW.pts[ids[1]]; vwZoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, VW.pinch.s * Math.hypot(a.x - b.x, a.y - b.y) / VW.pinch.d); }
+    else if (ids.length === 1 && VW.st && VW.s > 1) { VW.tx = VW.st.tx + e.clientX - VW.st.x; VW.ty = VW.st.ty + e.clientY - VW.st.y; vwApply(); }
+  });
+  function vwUp(e) {
+    if (!VW.pts[e.pointerId]) return; delete VW.pts[e.pointerId];
+    if (Object.keys(VW.pts).length) return;
+    var st = VW.st; VW.pinch = null; VW.st = null; if (!st) return;
+    var dx = e.clientX - st.x, dy = e.clientY - st.y;
+    if (VW.s <= 1.01 && Math.abs(dx) > 60 && Math.abs(dy) < 90) { vwShow(VW.i + (dx < 0 ? 1 : -1)); return; }
+    if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && Date.now() - st.t < 300) {
+      if (Date.now() - VW.lastTap < 320) { vwZoomAt(e.clientX, e.clientY, VW.s > 1.01 ? 1 : 2.5); VW.lastTap = 0; } else VW.lastTap = Date.now();
+    }
+  }
+  vw.addEventListener('pointerup', vwUp); vw.addEventListener('pointercancel', vwUp);
+  $('vwClose').onclick = vwClose;
+  function curPage() { return VW.tools ? pages[VW.i] : null; }
+  $('vwRot').onclick = function () { var p = curPage(); if (!p) return; p.rot = (p.rot + 1) % 4; drawPages(); VW.items = pageItems(); vwShow(VW.i); };
+  $('vwCut').onclick = function () { var p = curPage(); if (!p) return; vwClose(); openEditor(p); };
+  $('vwLeft').onclick = function () { var i = VW.i; if (!VW.tools || i < 1) return; pages.splice(i - 1, 0, pages.splice(i, 1)[0]); drawPages(); VW.items = pageItems(); vwShow(i - 1); say('这页移到第 ' + i + ' 页。'); };
+  $('vwDel').onclick = function () {
+    var i = VW.i; if (!curPage()) return;
+    sheet('删掉第 ' + (i + 1) + ' 页？', '删了就没有了，要的话再拍一次。', [{ label: '🗑 删掉', val: 1 }, { label: '不要删', val: 0, cls: 'ghost' }]).then(function (v) {
+      if (!v) return; pages.splice(i, 1); drawPages();
+      if (!pages.length) { vwClose(); return; }
+      VW.items = pageItems(); vwShow(Math.min(i, pages.length - 1)); say('删掉了。现在有 ' + pages.length + ' 页。');
+    });
+  };
+  function pageItems() { return pages.map(function (p) { return { src: function () { return render(p, 2200).then(function (r) { return r.url; }); }, title: '第 ' + (pages.indexOf(p) + 1) + ' 页', warn: p.warn }; }); }
+
+  var MAX_SIDE = 2600;
+  var pinValue = '';
+  var sentAt = 0, sentBase = '';   // 21-Oct: when the last save was sent, and its name, to check Drive if the reply is unreadable
+
+  function drawPapers(data) {
+    setProgData(data);
+    var sel = $('paperPick'); sel.innerHTML = '';
+    var first = document.createElement('option'); first.value = ''; first.textContent = '-'; sel.appendChild(first);
+    PROGP.forEach(function (p, i) { var o = document.createElement('option'); o.value = String(i); o.textContent = p.paper_id + ' · ' + p.kind; sel.appendChild(o); });
+    var t = document.createElement('option'); t.value = TYPE; t.textContent = 'type'; sel.appendChild(t);
+    if (!TODAY) sel.value = TYPE;
+    homeDate = PD ? PD.date : '';
+    go(PD ? 'home' : 'shoot');
+  }
+  function loadToday() { if (hasServer) run('todayPapers', [pinValue]).then(drawPapers).catch(function () { drawPapers(null); }); else drawPapers(null); }
+  window.__jrDrawPapers = drawPapers;   // local test only (tests/phone-375): feed a saved _今天的卷.json without Google
+
   // ---------- start: PIN or straight in ----------
   function start() {
     $('name').value = savedName() || '扫描-' + stamp();
     applyCamUi();
-    if (!hasServer) { show('app', true); say('这个网页还没有连上 Google（服务器地址没填）。\n可以先拍照、做 PDF，但 PDF 只会下载到这台机器，不会存到 Drive。', 'bad'); return; }
+    if (!hasServer) { show('app', true); drawPapers(null); say('这个网页还没有连上 Google（服务器地址没填）。\n可以先拍照、做 PDF，但 PDF 只会下载到这台机器，不会存到 Drive。', 'bad'); return; }
     try { pinValue = localStorage.getItem('jrScanPin') || ''; } catch (e) {}
     run('pinNeeded', []).then(function (need) {
       if (need && !pinValue) { show('pinBox', true); return; }
       enterApp();
-    }).catch(function (e) { show('app', true); say('连不上：' + e.message, 'bad'); });
+    }).catch(function (e) { show('app', true); drawPapers(null); say('连不上：' + e.message, 'bad'); });
   }
-  function enterApp() { show('pinBox', false); show('app', true); loadRecent(); loadToday(); }
+  function enterApp() { show('pinBox', false); show('app', true); loadToday(); }
   $('pinGo').onclick = function () {
     pinValue = $('pin').value.trim();
     run('listRecent', [pinValue]).then(function (files) {
       try { localStorage.setItem('jrScanPin', pinValue); } catch (e) {}
       enterApp(); drawRecent(files);
-    }).catch(function (e) { alert(e.message); });
+    }).catch(function (e) { say(e.message, 'bad'); });
   };
   function loadRecent() {
     if (!hasServer) return;
@@ -786,7 +1172,7 @@
     return process(c).then(function (k) {
       if (issues.length) {
         for (var i = before; i < pages.length; i++) pages[i].warn = issues.join('、');
-        say('⚠ 这张照片' + issues.join('、') + '。最好重拍：按这一页的 ✕ 删掉，再拍一次。', 'bad');
+        say('⚠ 第 ' + pages.length + ' 页' + issues.join('、') + '（红框那张）。点它看大图，不好就删掉重拍。', 'bad');
       }
       return k;
     });
@@ -916,28 +1302,27 @@
     g.putImageData(img, 0, 0);
   }
 
-  // ---------- page list ----------
+  // ---------- page list (v13: bigger pictures, the warning sits ON the picture, tap = full screen) ----------
   function drawPages() {
     var box = $('pages'); box.innerHTML = '';
-    $('make').disabled = uploadBusy || !pages.length; $('clear').disabled = uploadBusy || !pages.length;
-    syncUploadState_();
     pages.forEach(function (p, i) {
-      var card = document.createElement('div'); card.className = 'page';
-      var im = document.createElement('img'); card.appendChild(im);
-      render(p, 500).then(function (r) { im.src = r.url; });
-      var n = document.createElement('div'); n.className = 'n'; n.textContent = '第 ' + (i + 1) + ' 页' + (p.cut ? '　✂' : '') + (p.warn ? '　⚠ ' + p.warn : ''); if (p.warn) n.style.color = 'var(--bad)'; card.appendChild(n);
-      var tools = document.createElement('div'); tools.className = 'tools';
-      [['✂', function () { openEditor(p); }, true],
-       ['↻', function () { p.rot = (p.rot + 1) % 4; }],
-       ['⬆', function () { if (i > 0) { pages.splice(i - 1, 0, pages.splice(i, 1)[0]); } }],
-       ['⬇', function () { if (i < pages.length - 1) { pages.splice(i + 1, 0, pages.splice(i, 1)[0]); } }],
-       ['✕', function () { if (confirm('删掉第 ' + (i + 1) + ' 页？')) pages.splice(i, 1); }]
-      ].forEach(function (t) { var b = document.createElement('button'); b.textContent = t[0]; b.onclick = function () { t[1](); if (!t[2]) drawPages(); }; tools.appendChild(b); });
-      card.appendChild(tools); box.appendChild(card);
+      var card = el('div', 'page' + (p.warn ? ' bad' : ''));
+      var im = document.createElement('img'); im.alt = '第 ' + (i + 1) + ' 页'; card.appendChild(im);
+      render(p, 600).then(function (r) { im.src = r.url; });
+      card.appendChild(el('span', 'n', String(i + 1) + (p.cut ? ' ✂' : '')));
+      if (p.warn) card.appendChild(el('span', 'w', '⚠ ' + p.warn));
+      card.onclick = function () { openViewer(pageItems(), i, true); };
+      box.appendChild(card);
     });
+    if (!pages.some(function (p) { return p.warn; }) && /照片|糊|影子|太暗/.test($('msg').textContent)) say('');   // the warning went with its page
+    syncUploadState_(); drawShoot(); if (view !== 'shoot') drawDock();
   }
   $('enhance').onchange = drawPages;
-  $('clear').onclick = function () { if (confirm('全部清掉？')) { pages = []; drawPages(); $('links').innerHTML = ''; say('已经清掉。'); $('name').value = savedName() || '扫描-' + stamp(); $('pupil').value = ''; } };
+  $('clear').onclick = function () {
+    sheet('全部清掉？', '照片和学生名字都清掉（卷还记着，下一个学生直接拍）。', [{ label: '🗑 清掉', val: 1 }, { label: '不要', val: 0, cls: 'ghost' }]).then(function (v) {
+      if (v) { resetPhotos(true); say('已经清掉：照片和名字。'); }
+    });
+  };
   // 16-Oct JR: 「名字能不能自动命名」. The paper / book name is remembered on this phone; only the pupil's name is typed each time.
   // (A pupil's handwritten name is not read automatically: a wrong guess would file one child's script under another child.)
   function savedName() { try { return localStorage.getItem('jrScanName') || ''; } catch (e) { return ''; } }
@@ -969,16 +1354,15 @@
     var a = document.createElement('a'); a.href = URL.createObjectURL(doc.output('blob')); a.download = name; a.textContent = '⬇ 下载 ' + name; return a;
   }
   $('make').onclick = function () {
-    if (!pages.length || uploadBusy) return;
-    if (TODAY && $('paperPick').value === '') { say('请先按「年级」→「卷」→「谁的卷」（不在单子上就按「✍ 不在单子上」，自己打字）。', 'bad'); $('pickBox').scrollIntoView(); return; }
-    if (picked() && !whoChosen) { say('请按一下是谁的卷（全班一起拍就按「多人」）。', 'bad'); $('pickBox').scrollIntoView(); return; }
+    if (!pages.length || uploadBusy || uploaded_()) return;      // v13: one upload per set of photos + name (the button is grey after it)
+    if (!pickReady()) { sStep = 2; drawShoot(); say(picked() ? '先按是谁的卷（全班一起拍就按「多人」）。' : '先按哪份卷。', 'bad'); return; }
     sentAt = 0; sentBase = '';   // never let a previous success validate this attempt
     var nm = $('name').value.trim(), pu = $('pupil').value.trim();
-    if (nm && !/^扫描-\d{8}-\d{6}$/.test(nm)) { try { localStorage.setItem('jrScanName', nm); } catch (e) {} }
+    if (typing() && nm && !/^扫描-\d{8}-\d{6}$/.test(nm)) { try { localStorage.setItem('jrScanName', nm); } catch (e) {} }
     var base = pickedBase() || ((nm || '扫描-' + stamp()) + (pu ? '-' + pu : '')).replace(/[\\\/:*?"<>|]/g, '-');
     var uploadSignature = '';
     uploadBusy = true; uploadUnknown = false; syncUploadState_();
-    $('make').disabled = true; $('links').innerHTML = '';
+    $('links').innerHTML = '';
     say('做 PDF 中……（' + pages.length + ' 页）');
     queue.then(function () {
       uploadSignature = uploadSignature_();
@@ -988,8 +1372,7 @@
     }).then(function (rendered) {
       var d = buildPdfs(rendered);
       var n1 = base + '-原图.pdf';
-      $('links').appendChild(download(d.plain, n1));
-      if (!hasServer) { uploadBusy = false; syncUploadState_(); say('PDF 做好了，但没有连上 Google，只下载了，没有存到 Drive。', 'bad'); $('make').disabled = false; return; }
+      if (!hasServer) { $('links').appendChild(download(d.plain, n1)); uploadBusy = false; syncUploadState_(); say('PDF 做好了，但没有连上 Google，只下载了，没有存到 Drive。', 'bad'); return; }
       say('存到 Google Drive 中……');
       var b64 = function (doc) { return doc.output('datauristring').split(',')[1]; };
       sentAt = Date.now(); sentBase = base;
@@ -997,12 +1380,11 @@
         if (!Array.isArray(saved) || !saved.length || saved.some(function(f) { return !f.name || !f.url; })) throw new Error('云端未返回文件回执。');
         saved.forEach(function (f) { var a = document.createElement('a'); a.href = f.url; a.target = '_blank'; a.textContent = '☁ 在 Drive 打开：' + f.name; $('links').appendChild(a); });
         lastSavedSignature = uploadSignature; lastUploadedName = saved.map(function(f) { return f.name; }).join('、'); uploadBusy = false; uploadUnknown = false; syncUploadState_();
-        say('云端已上传 ✅：' + lastUploadedName + '\n不用重复上传。下一步等待电脑同步、整理，再交小V核卷；这条提示不代表已批改。', 'ok');
-        $('make').disabled = false; loadRecent();
+        say('✔ 上传好了。', 'ok'); drawShoot(); drawRecentLater();
       });
     }).catch(function (e) {
       var why = '出问题了：' + (e && e.message ? e.message : e);
-      if (!sentAt) { uploadBusy = false; syncUploadState_(); say(why + '\n照片还在，尚未送到云端。', 'bad'); $('make').disabled = false; return; }
+      if (!sentAt) { uploadBusy = false; syncUploadState_(); say(why + '\n照片还在，还没送到 Drive。可以再按上传。', 'bad'); return; }
       // 21-Oct (JR): Google sometimes saves the file but its reply comes back unreadable; "press again" then made a second copy.
       // So look in Drive first: this scan's name, saved since we sent it, means it IS saved.
       say('服务器回得怪，先看看 Drive 里有没有存到……');
@@ -1012,14 +1394,15 @@
         if (hit) {
           var a = document.createElement('a'); a.href = hit.url; a.target = '_blank'; a.textContent = '☁ 在 Drive 打开：' + hit.name; $('links').appendChild(a);
           lastSavedSignature = uploadSignature; lastUploadedName = hit.name; uploadBusy = false; uploadUnknown = false; syncUploadState_();
-          say('云端已上传 ✅：' + hit.name + '（服务器回复较慢）\n不用再按。电脑整理、小V核卷是后续步骤。', 'ok'); drawRecent(files);
+          say('✔ 上传好了（服务器回得慢）。不用再按。', 'ok'); drawRecent(files);
         } else {
-          uploadUnknown = true; say(why + '\n暂未确认云端收到。照片还在，先刷新最近文件，不要重复上传。', 'bad');
+          uploadUnknown = true; say(why + '\n还不确定 Drive 收到没有。照片还在，先看「最近存的文件」，不要再上传一次。', 'bad');
         }
-      }).catch(function () { uploadUnknown = true; say(why + '\n暂时也查不到 Drive。照片仍保留，不要重复上传。', 'bad'); })
-        .then(function () { uploadBusy = false; syncUploadState_(); $('make').disabled = false; });
+      }).catch(function () { uploadUnknown = true; say(why + '\n暂时也查不到 Drive。照片还在，不要再上传一次。', 'bad'); })
+        .then(function () { uploadBusy = false; syncUploadState_(); drawShoot(); });
     });
   };
+  function drawRecentLater() { if (!$('recentBox').classList.contains('hidden')) loadRecent(); }
 
   // ---------- live camera: guide frame + level + live checks (only on a top-level HTTPS/localhost page, never inside Apps Script) ----------
   // Apps Script's sandboxed iframe may not call getUserMedia, so there the old file-input camera stays.
@@ -1047,11 +1430,11 @@
   }
   function applyCamUi(failWhy) {
     show('liveBtn', liveOK);
-    $('camBtn').classList.toggle('small', liveOK);
+    $('camBtn').classList.toggle('small', liveOK); $('camBtn').classList.toggle('big', !liveOK); $('camBtn').classList.toggle('ghost', liveOK);
     if (liveOK) $('camBtn').firstChild.nodeValue = '用手机自己的相机';
     show('camWhy', !liveOK);
     if (!liveOK) $('camWhyText').textContent = noLiveWhy(failWhy);
-    $('ver').textContent = 'v7.6 · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
+    $('ver').textContent = VERSION + ' · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
   }
   $('camWhyCopy').onclick = function () {
     var done = function () { $('camWhyCopy').textContent = '✅ 复制好了，去 Safari / Chrome 贴上'; };
@@ -1322,7 +1705,7 @@
   $('modeTwo').onclick = function () { setMode('two'); };
   $('autoBtn').onclick = function () {
     camAuto = !camAuto; camGreenSince = 0;
-    $('autoBtn').classList.toggle('on', camAuto); $('autoBtn').textContent = camAuto ? '自动拍：开' : '自动拍：关';
+    $('autoBtn').classList.toggle('on', camAuto); $('autoBtn').textContent = camAuto ? '● 自动拍：开' : '○ 自动拍：关';
   };
 
   // Test hooks for the local check only (add a picture without the camera).
