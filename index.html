@@ -73,6 +73,7 @@
   .faces button.past { color:#5f7368; text-decoration:line-through; text-decoration-thickness:2px; background:#17271f; }
   .faces button.on { background:var(--go); color:var(--go-fg); border-color:var(--go); text-decoration:none; }
   .faceInfo { display:flex; gap:10px; align-items:center; margin-top:8px; color:var(--dust); font-size:16px; min-height:24px; }
+  .faceInfo .thumbWait { width:64px; height:88px; border-radius:6px; background:rgba(255,255,255,.08); flex:0 0 auto; }
   .faceInfo img { width:64px; height:88px; object-fit:cover; object-position:top; border-radius:6px; background:#fff; flex:0 0 auto; }
   .seg { display:flex; border:1.5px solid var(--line); border-radius:40px; overflow:hidden; }
   .seg button { flex:1; border-radius:0; background:transparent; color:var(--chalk); font-size:19px; padding:14px 6px; }
@@ -313,7 +314,7 @@
   // Big C fills in JR's Apps Script web-app address (https://script.google.com/macros/s/.../exec) before the page is published on GitHub Pages.
   // Inside Apps Script itself this stays unused (google.script.run is used instead).
   var EXEC_URL = 'https://script.google.com/macros/s/AKfycbyxbS6gZNiC37tzVZgdoM4eJLfdWZAKOU5rGPMp-D9XRwd8DTkhQL4Braa3lYnddZ3e1A/exec';   // filled in only in the published copy (apps/scanner/publish_jr_scan.py); the address never goes into this repo
-  var VERSION = '第十三版 · 16-Nov-2026';
+  var VERSION = '第十三版（快）· 18-Nov-2026';
   var onGoogle = typeof google !== 'undefined' && google.script && google.script.run;
   var hasServer = !!(onGoogle || EXEC_URL);     // false = nothing to save to: the PDF is only downloaded
   var $ = function (id) { return document.getElementById(id); };
@@ -470,6 +471,7 @@
   // ---------- screens ----------
   var view = 'home', homeDate = '';
   function go(v) {
+    if (v === 'home' && pendingPD && pickFree()) { var d = pendingPD; pendingPD = null; view = 'home'; applyFresh(d); return; }   // v13.1: the fresh list waits for a safe moment
     view = v; show('vHome', v === 'home'); show('vClass', v === 'class'); show('vShoot', v === 'shoot');
     if (v === 'home') drawHome(); else if (v === 'class') drawClass(); else drawShoot();
     drawDock(); window.scrollTo(0, 0);
@@ -648,6 +650,7 @@
     var info = el('div', 'faceInfo'), f = faces.filter(function (x) { return x.n === pe.face; })[0], im = faceImgs[p.paper_id] || {};
     if (f) {
       if (im[f.n]) { var i = el('img'); i.src = im[f.n]; i.alt = ''; i.onclick = function () { openFaceViewer(p, f.n); }; info.appendChild(i); }
+      else if (faceImgs[p.paper_id] === null) info.appendChild(el('i', 'thumbWait'));   // v13.1: keep the place, so the page does not jump when the picture arrives
       info.appendChild(el('span', '', '第 ' + f.n + ' 面：' + f.title + (im[f.n] ? '（点小图看大）' : '')));
     } else info.appendChild(el('span', '', mine ? '划掉的 = 上次已经做完的面。' : ''));
     body.appendChild(info);
@@ -732,9 +735,19 @@
   }
   $('clsBack').onclick = function () { homeDate = ccDate; go('home'); };
   function loadFaceImgs(p) {
-    if (!p || faceImgs[p.paper_id] !== undefined || !hasServer) return;
+    if (!p || faceImgs[p.paper_id] !== undefined || !hasServer) return Promise.resolve();
     faceImgs[p.paper_id] = null;
-    run('faceThumbs', [pinValue, p.paper_id]).then(function (r) { faceImgs[p.paper_id] = r || {}; if (view === 'class') drawClass(); }).catch(function () { faceImgs[p.paper_id] = {}; });
+    return run('faceThumbs', [pinValue, p.paper_id]).then(function (r) {
+      faceImgs[p.paper_id] = r || {};
+      if (view === 'class' && openPi >= 0 && PROGP[openPi] && PROGP[openPi].paper_id === p.paper_id) drawClass();   // v13.1: redraw only for the paper on screen
+    }).catch(function () { faceImgs[p.paper_id] = {}; });
+  }
+  var prefetched = false;
+  function prefetchThumbs() {   // v13.1: one paper at a time in the background, newest first, so a class opens with its pictures ready
+    if (prefetched || !PD) return; prefetched = true;
+    var list = PROGP.filter(function (p) { return p.kind !== '回头考' && (p.faces || []).length; })
+      .sort(function (a, b) { return (b.date || '') < (a.date || '') ? -1 : (b.date || '') > (a.date || '') ? 1 : 0; }).slice(0, 12);
+    list.reduce(function (pr, p) { return pr.then(function () { return loadFaceImgs(p); }); }, Promise.resolve());
   }
   function openFaceViewer(p, n) {
     var im = faceImgs[p.paper_id] || {}, list = (p.faces || []).filter(function (f) { return im[f.n]; });
@@ -938,7 +951,30 @@
     homeDate = PD ? PD.date : '';
     go(PD ? 'home' : 'shoot');
   }
-  function loadToday() { if (hasServer) run('todayPapers', [pinValue]).then(drawPapers).catch(function () { drawPapers(null); }); else drawPapers(null); }
+  // v13.1 (JR 18-Nov「每次按进去都慢慢」). Measured: the page draws in 12 ms even on a slow phone; every wait is the Google server
+  // (the smallest call took 1.3–8 s). So the list saved on this phone TODAY shows at once, the server is asked in the background,
+  // and the fresh list replaces it only at a safe moment (on the home screen, no photos, no paper picked) — never under her finger.
+  var CACHE_KEY = 'jrScanToday', pendingPD = null;
+  function todayIso() { var d = new Date(), p = function (x) { return ('0' + x).slice(-2); }; return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+  function cachedToday() { try { var d = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); return d && d.date === todayIso() ? d : null; } catch (e) { return null; } }
+  function keepToday(d) { try { if (d && d.date) localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch (e) {} }
+  function pickFree() { var v = $('paperPick').value; return !pages.length && (v === '' || v === TYPE); }
+  function applyFresh(d) {
+    var keep = homeDate; drawPapers(d);
+    if (keep && PD && keep !== homeDate && (PD.days || []).some(function (x) { return x.date === keep; })) { homeDate = keep; drawHome(); }
+  }
+  function loadToday() {
+    if (!hasServer) { drawPapers(null); return; }
+    var had = !!PD;
+    run('todayPapers', [pinValue]).then(function (d) {
+      keepToday(d);
+      if (!had || (view === 'home' && pickFree())) applyFresh(d); else pendingPD = d;
+      prefetchThumbs();
+    }).catch(function (e) {
+      if (/密码/.test(e.message)) { try { localStorage.removeItem('jrScanPin'); localStorage.removeItem(CACHE_KEY); } catch (x) {} show('app', false); show('pinBox', true); return; }
+      if (had) say('连不上 Google：先用这部手机今天存的课表。', 'bad'); else drawPapers(null);
+    });
+  }
   window.__jrDrawPapers = drawPapers;   // local test only (tests/phone-375): feed a saved _今天的卷.json without Google
 
   // ---------- start: PIN or straight in ----------
@@ -947,6 +983,9 @@
     applyCamUi();
     if (!hasServer) { show('app', true); drawPapers(null); say('这个网页还没有连上 Google（服务器地址没填）。\n可以先拍照、做 PDF，但 PDF 只会下载到这台机器，不会存到 Drive。', 'bad'); return; }
     try { pinValue = localStorage.getItem('jrScanPin') || ''; } catch (e) {}
+    var c = pinValue ? cachedToday() : null;
+    if (c) { show('app', true); drawPapers(c); }          // v13.1: today's list from this phone, at once
+    if (pinValue) { enterApp(); return; }                  // v13.1: PIN saved = skip the pinNeeded round trip; a wrong PIN comes back from todayPapers
     run('pinNeeded', []).then(function (need) {
       if (need && !pinValue) { show('pinBox', true); return; }
       enterApp();
