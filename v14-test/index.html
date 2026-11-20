@@ -1,0 +1,1866 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- v13 (16-Nov-2026, JR「全部照建议」+ 样子 B): the first page is TODAY'S TIMETABLE (which class is not pressed yet, at a glance); tap a class
+     to record how far it got (face grid 1-12 on one screen, 小测 and 「这份卷」 asked apart, cancel within 10 minutes); 「📷 拍卷子」 is pinned
+     at the bottom and goes photo › paper › upload, one step per screen. Photos open full screen (pinch, swipe). Blackboard palette (JR 12-Oct).
+     RELATED: apps/scanner/Code.gs (saveProgress · undoProgress · tagScan · savePdfs) · apps/scanner/today_papers.py (_今天的卷.json) · README.md.
+     History: v9 (5-Nov) big buttons · v7 (15-Oct) one page, two homes (Apps Script google.script.run / GitHub Pages fetch + live camera) ·
+     v4 the phone saves ORIGINAL photos only; the Dell cleaner (cleaner/scan_clean.py) cuts, straightens and makes the 2-up. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root { --board:#14231d; --slate:#1b2f27; --slate2:#22392f; --line:#2c4438; --chalk:#f0efe6; --dust:#a9b8ac; --go:#f3d25a; --go-fg:#1d1a05;
+          --done:#7fd3a0; --done-soft:#1f4a34; --wait:#f08c4a; --bad:#ef7d7d; --wood:#5a4330;
+          --bg:var(--board); --card:var(--slate); --ink:var(--chalk); --soft:var(--dust); --accent:var(--go); --ok:var(--done); }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--board); color:var(--chalk); font-family:system-ui,"PingFang SC","Microsoft YaHei",sans-serif; font-size:18px; }
+  main { max-width:560px; margin:0 auto; padding:14px 16px 120px; }
+  .serif, h1, h2 { font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif; }
+  h1 { font-size:30px; margin:2px 0 12px; font-weight:700; }
+  h2 { font-size:26px; margin:2px 0 4px; font-weight:700; }
+  .kicker { color:var(--dust); font-size:17px; font-weight:600; }
+  .sub { color:var(--dust); font-size:17px; margin:0 0 12px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  button, .btn { border:0; border-radius:14px; padding:15px 16px; font-size:20px; font-weight:700; cursor:pointer; color:var(--go-fg); background:var(--go);
+                 flex:1 1 45%; text-align:center; font-family:inherit; line-height:1.3; }
+  button.ghost, .btn.ghost { background:transparent; color:var(--chalk); border:1.5px solid var(--line); font-weight:600; }
+  button.link { background:none; border:0; color:var(--dust); padding:8px 0; font-size:18px; font-weight:600; text-align:left; flex:none; }
+  button:disabled { opacity:.45; }
+  button.gone { background:#2b3a33; color:var(--dust); opacity:1; }
+  input[type=text], input[type=password] { width:100%; font-size:20px; padding:12px; border-radius:12px; border:1.5px solid var(--line); background:var(--slate); color:var(--chalk); }
+  .hidden { display:none !important; }
+  .hint { color:var(--dust); font-size:16px; }
+  .fname { word-break:break-all; }
+  /* ---------- home = today's timetable (样子 B) ---------- */
+  .tt { border-top:1px solid var(--line); margin-top:6px; }
+  .ttRow { display:flex; align-items:center; gap:12px; width:100%; padding:14px 2px; border:0; border-bottom:1px solid var(--line); border-radius:0; background:none;
+           color:var(--chalk); text-align:left; font-weight:600; }
+  .ttRow .nm { flex:1; font-size:21px; line-height:1.3; }
+  .ttRow .nm small { display:block; color:var(--dust); font-size:16px; font-weight:400; margin-top:2px; }
+  .chip { flex:0 0 auto; font-size:16px; padding:5px 12px; border-radius:20px; font-weight:700; }
+  .chip.did { background:var(--done-soft); color:var(--done); }
+  .chip.wait { border:1.5px solid var(--wait); color:var(--wait); }
+  .chip.dim { border:1.5px solid var(--line); color:var(--dust); }
+  .moreBtns { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:16px; }
+  .moreBtns button { font-size:17px; padding:12px 8px; }
+  .card { background:var(--slate); border:1.5px solid var(--line); border-radius:16px; padding:14px; margin:12px 0; }
+  .card.warn { border-color:var(--go); padding:6px 14px; }
+  .card.warn > button.link { color:var(--go); width:100%; }
+  .card h3 { margin:0 0 6px; font-size:19px; }
+  .unk { display:flex; gap:10px; align-items:center; padding:8px 0; border-top:1px solid var(--line); }
+  .unk span { flex:1; font-size:16px; word-break:break-all; color:var(--dust); }
+  .unk button { flex:0 0 auto; font-size:17px; padding:10px 14px; }
+  /* bottom bar (pinned) */
+  .dock { position:fixed; left:0; right:0; bottom:0; z-index:30; padding:12px 16px; padding-bottom:max(12px, env(safe-area-inset-bottom));
+          background:linear-gradient(transparent, rgba(20,35,29,.94) 30%); }
+  .dock .in { max-width:560px; margin:0 auto; display:flex; gap:10px; }
+  .dock button { font-size:22px; padding:18px 12px; border-radius:40px; }
+  /* ---------- class page ---------- */
+  .paper { background:var(--slate); border:1.5px solid var(--line); border-radius:16px; margin:12px 0; overflow:hidden; }
+  .paper.open { border-color:var(--go); }
+  .pHead { display:block; width:100%; background:none; border:0; border-radius:0; color:var(--chalk); text-align:left; padding:14px; font-weight:700; font-size:19px; }
+  .pHead .st { display:block; font-weight:500; font-size:16px; color:var(--dust); margin-top:4px; white-space:pre-line; }
+  .pHead .ph { display:block; font-weight:600; font-size:16px; color:var(--done); margin-top:4px; }
+  .pBody { padding:0 14px 14px; }
+  .q { font-size:18px; font-weight:700; margin:14px 0 8px; }
+  .q small { color:var(--dust); font-weight:400; font-size:15px; }
+  /* 19-Nov v14 (JR「照片停在那里，就在那个页数选择」): the face picture stays put; the numbers are right under it */
+  .stage { position:relative; width:100%; height:min(36vh, 340px); background:#fff; border-radius:10px; overflow:hidden; touch-action:pan-y; margin:6px 0 8px; user-select:none; }
+  .stage img { width:100%; height:100%; object-fit:contain; display:block; -webkit-user-drag:none; }
+  .stage .cap { position:absolute; left:0; right:0; bottom:0; padding:7px 10px; background:rgba(20,35,29,.88); color:var(--chalk); font-size:15px; line-height:1.35; }
+  .stage .cap b { color:var(--go); }
+  .stage .nav { position:absolute; top:42%; width:34px; height:52px; border-radius:10px; background:rgba(20,35,29,.55); color:#fff; font-size:26px; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+  .stage .nav.l { left:6px; } .stage .nav.r { right:6px; }
+  .stage .big { position:absolute; right:8px; top:8px; background:rgba(20,35,29,.8); color:var(--chalk); font-size:14px; padding:4px 9px; border-radius:12px; pointer-events:none; }
+  .willSave { margin:10px 0 0; padding:9px 12px; border-radius:10px; background:var(--slate2); color:var(--chalk); font-size:17px; }
+  .willSave b { color:var(--go); }
+  .reasons { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:8px; }
+  .reasons button { background:transparent; color:var(--chalk); border:1.5px solid var(--line); padding:12px 4px; font-size:18px; }
+  .reasons button.on { background:var(--go); color:var(--go-fg); border-color:var(--go); }
+  .faces { display:grid; grid-template-columns:repeat(6,1fr); gap:5px; }
+  .faces button { padding:0; height:50px; border-radius:8px; font-size:24px; font-family:"Noto Serif SC",Georgia,serif; font-weight:600; flex:none;
+                  background:var(--board); color:var(--chalk); border:1.5px solid var(--line); }
+  .faces button.past { color:#5f7368; text-decoration:line-through; text-decoration-thickness:2px; background:#17271f; }
+  .faces button.on { background:var(--go); color:var(--go-fg); border-color:var(--go); text-decoration:none; }
+  .faceInfo { display:flex; gap:10px; align-items:center; margin-top:8px; color:var(--dust); font-size:16px; min-height:24px; }
+  .faceInfo .thumbWait { width:64px; height:88px; border-radius:6px; background:rgba(255,255,255,.08); flex:0 0 auto; }
+  .faceInfo img { width:64px; height:88px; object-fit:cover; object-position:top; border-radius:6px; background:#fff; flex:0 0 auto; }
+  .seg { display:flex; border:1.5px solid var(--line); border-radius:40px; overflow:hidden; }
+  .seg button { flex:1; border-radius:0; background:transparent; color:var(--chalk); font-size:19px; padding:14px 6px; }
+  .seg button.on { background:var(--go); color:var(--go-fg); }
+  .saveRow { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+  .saveRow button { border-radius:40px; padding:16px 6px; font-size:19px; }
+  .saveRow button.one { grid-column:1 / -1; }
+  .ok { margin:12px 0; padding:14px; border-radius:12px; background:var(--done-soft); border-left:5px solid var(--done); color:var(--done); font-size:19px; font-weight:700; line-height:1.4; }
+  .ok.badBox { background:#3a2323; border-left-color:var(--bad); color:var(--bad); }
+  .ok button.link { color:var(--chalk); text-decoration:underline; display:block; padding:8px 0 0; font-size:18px; }
+  .ask { margin:12px 0; padding:14px; border-radius:12px; border:2px solid var(--go); background:#2e2a12; font-size:18px; font-weight:600; line-height:1.4; }
+  .note { color:var(--dust); font-size:15px; margin:4px 0 0; }
+  .sect { color:var(--go); font-size:17px; font-weight:700; margin:20px 0 0; }
+  .recBtns { display:grid; grid-template-columns:repeat(2,1fr); gap:6px; }
+  .recBtns button { background:transparent; color:var(--chalk); border:1.5px solid var(--line); padding:13px 4px; font-size:19px; }
+  .recBtns button.on { background:var(--go); color:var(--go-fg); border-color:var(--go); }
+  /* ---------- shoot: 1 photo › 2 paper › 3 upload ---------- */
+  .steps { display:flex; gap:6px; margin:4px 0 14px; }
+  .steps button { flex:1; font-size:16px; padding:9px 4px; border-radius:30px; background:transparent; color:var(--dust); border:1.5px solid var(--line); font-weight:600; }
+  .steps button.on { background:var(--slate2); color:var(--chalk); border-color:var(--go); }
+  .steps button.did { color:var(--done); }
+  .shootBtns { display:flex; flex-direction:column; gap:10px; }
+  .btn.big, button.big { font-size:24px; padding:22px 16px; flex:none; border-radius:18px; }
+  .btn.small { font-size:17px; padding:12px; flex:none; }
+  .pages { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:14px 0; }
+  .page { position:relative; background:var(--slate); border-radius:10px; padding:5px; border:2px solid transparent; }
+  .page.bad { border-color:var(--bad); }
+  .page img { display:block; width:100%; aspect-ratio:3/4; object-fit:cover; object-position:top; background:#fff; border-radius:6px; }
+  .page .n { position:absolute; left:9px; top:9px; background:rgba(20,35,29,.85); color:var(--chalk); font-size:15px; font-weight:700; padding:2px 8px; border-radius:10px; }
+  .page .w { display:block; color:var(--bad); font-size:14px; font-weight:700; margin-top:4px; text-align:center; }
+  .who { margin:6px 0 14px; padding:16px; border-radius:16px; background:var(--slate); border:1.5px solid var(--line); }
+  .who .big { font-size:26px; font-weight:800; line-height:1.3; }
+  .who .big b { color:var(--go); }
+  .pkList { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
+  .pkList .wide { grid-column:1 / -1; }
+  .pkHead { grid-column:1 / -1; font-size:17px; color:var(--go); font-weight:700; margin-top:8px; }
+  .pkHead.soft { color:var(--dust); font-weight:400; font-size:16px; margin-top:0; }
+  button.pk { min-height:54px; padding:10px 12px; font-size:19px; flex:none; line-height:1.3; word-break:break-all; background:transparent; color:var(--chalk); border:1.5px solid var(--line); font-weight:600; text-align:left; }
+  button.pk.on { background:var(--go); color:var(--go-fg); border-color:var(--go); }
+  button.pk.two { white-space:pre-line; font-size:18px; }
+  .links a { display:block; color:var(--go); margin:8px 0; font-size:17px; word-break:break-all; }
+  #msg { position:fixed; left:12px; right:12px; bottom:96px; z-index:35; max-width:536px; margin:0 auto; padding:12px 14px; border-radius:12px; background:#0e1a15;
+         border:1.5px solid var(--line); color:var(--chalk); font-size:17px; white-space:pre-line; box-shadow:0 6px 20px rgba(0,0,0,.4); }
+  #msg.ok { border-color:var(--done); color:var(--done); } #msg.bad { border-color:var(--bad); color:var(--bad); }
+  #msg:empty { display:none; }
+  #ver { margin:28px 0 0; text-align:center; color:var(--dust); font-size:15px; }
+  /* ---------- slide-up panel (设计灵感 16-Oct #深色面板从底部滑上来) ---------- */
+  #sheetBg { position:fixed; inset:0; z-index:70; background:rgba(0,0,0,.55); opacity:0; transition:opacity .3s; }
+  #sheetBg.on { opacity:1; }
+  #sheet { position:fixed; left:0; right:0; bottom:0; z-index:71; max-height:86vh; overflow:auto; background:var(--slate); border-top:2px solid var(--go);
+           border-radius:22px 22px 0 0; padding:20px 16px; padding-bottom:max(20px, env(safe-area-inset-bottom)); transform:translateY(105%); transition:transform .55s cubic-bezier(.2,.9,.25,1); }
+  #sheet.on { transform:none; }
+  #sheet .in { max-width:560px; margin:0 auto; }
+  #sheetTitle { font-size:22px; font-weight:800; margin:0 0 6px; }
+  #sheetText { color:var(--dust); font-size:17px; margin:0 0 14px; white-space:pre-line; }
+  #sheetBtns { display:flex; flex-direction:column; gap:8px; }
+  #sheetBtns button { flex:none; }
+  /* ---------- full-screen photo viewer: pinch, double-tap, swipe ---------- */
+  #vw { position:fixed; inset:0; z-index:60; background:#000; touch-action:none; overflow:hidden; }
+  #vwImg { position:absolute; left:0; top:0; transform-origin:0 0; user-select:none; -webkit-user-drag:none; max-width:none; }
+  #vwTop, #vwBot { position:absolute; left:0; right:0; display:flex; gap:8px; align-items:center; padding:10px 12px; background:rgba(20,35,29,.88); z-index:2; }
+  #vwTop { top:0; padding-top:max(10px, env(safe-area-inset-top)); }
+  #vwBot { bottom:0; padding-bottom:max(10px, env(safe-area-inset-bottom)); }
+  #vwTitle { flex:1; font-size:19px; font-weight:700; }
+  #vwTitle i { color:var(--bad); font-style:normal; }
+  #vwTop button { flex:0 0 auto; padding:10px 16px; font-size:18px; }
+  #vwBot button { flex:1; font-size:17px; padding:12px 4px; background:transparent; color:var(--chalk); border:1.5px solid var(--line); }
+  #vwBot button.del { color:var(--bad); border-color:#6b3434; }
+  #vwHint { position:absolute; left:0; right:0; bottom:84px; text-align:center; color:#cfd8d2; font-size:15px; pointer-events:none; text-shadow:0 1px 3px #000; }
+  /* corner editor + live camera (unchanged from v12, palette only) */
+  .layer { position:fixed; inset:0; background:#000; z-index:65; display:flex; flex-direction:column; }
+  .layer video, .layer canvas { flex:1; width:100%; min-height:0; object-fit:contain; touch-action:none; }
+  .bar { display:flex; gap:10px; padding:12px; background:#0b0e11; align-items:center; }
+  .bar button { flex:1; }
+  .cam { position:fixed; inset:0; background:#000; z-index:80; overflow:hidden; user-select:none; -webkit-user-select:none; }
+  .cam video, .cam canvas { position:absolute; left:0; top:0; width:100%; height:100%; }
+  .cam video { object-fit:contain; background:#000; }
+  .cam canvas { pointer-events:none; }
+  .cam { --camOk:#7fd3a0; --camBad:#ef7d7d; font-family:"Source Sans 3","Noto Sans SC",system-ui,sans-serif; }
+  #camTop { position:absolute; left:0; right:0; top:0; display:flex; gap:6px; padding:8px 10px; padding-top:max(8px, env(safe-area-inset-top)); background:rgba(20,35,29,.82); }
+  #camTop button { padding:7px 4px; font-size:15px; font-weight:600; background:#1b2f27; color:#f0efe6; border:1px solid #2f4a3e; border-radius:9px; }
+  #camTop button.on { background:#f3d25a; color:#14231d; border-color:#f3d25a; }
+  /* v13 (测试报告 设计怪 8): 「自动拍」 is a switch, not a choice like 一页 / 两页: a dot, never the same yellow block */
+  #camTop #autoBtn { background:#1b2f27; color:#f0efe6; border-color:#2f4a3e; }
+  #camTop #autoBtn.on { color:var(--camOk); border-color:var(--camOk); background:#1b2f27; }
+  #camStatus { position:absolute; left:10px; right:58px; top:calc(max(8px, env(safe-area-inset-top)) + 50px); height:34px; display:flex; align-items:center; gap:8px; padding:0 12px; border-radius:17px;
+    background:rgba(20,35,29,.86); border:2px solid var(--camBad); color:#f0efe6; font-size:16px; font-weight:600; pointer-events:none; white-space:nowrap; overflow:hidden; }
+  #camStatus i { flex:0 0 auto; width:10px; height:10px; border-radius:50%; background:var(--camBad); }
+  #camStatus.ok { border-color:var(--camOk); } #camStatus.ok i { background:var(--camOk); }
+  #camBottom { position:absolute; left:0; right:0; bottom:0; display:flex; align-items:center; gap:10px; padding:14px; padding-bottom:max(14px, env(safe-area-inset-bottom)); background:linear-gradient(transparent, rgba(0,0,0,.65)); }
+  #camBottom .side { flex:1; display:flex; }
+  #camBottom .side.r { justify-content:flex-end; }
+  #camDone { flex:0 0 auto; padding:14px 22px; background:rgba(20,35,29,.85); color:var(--chalk); border:1px solid var(--line); }
+  #camShot { flex:0 0 auto; width:84px; height:84px; padding:0; border-radius:50%; border:6px solid #fff; background:var(--go); }
+  #camCount { color:#fff; font-size:20px; font-weight:700; text-shadow:0 1px 4px #000; }
+  #camFlash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; }
+  @media (prefers-reduced-motion: reduce) { #sheet, #sheetBg { transition:none; } }
+</style>
+</head>
+<body>
+<main>
+  <section id="pinBox" class="hidden">
+    <h1>JR 扫描</h1>
+    <p>请输入家里的密码：</p>
+    <input id="pin" type="password" inputmode="numeric" autocomplete="off">
+    <div class="row" style="margin-top:10px"><button id="pinGo">进入</button></div>
+  </section>
+
+  <section id="app" class="hidden">
+    <!-- ===== HOME: today's timetable ===== -->
+    <div id="vHome">
+      <div class="kicker" id="homeDay"></div>
+      <h1 id="homeTitle">今天的课</h1>
+      <button id="homeBackToday" type="button" class="link hidden">← 回到今天</button>
+      <div id="unkBox" class="card warn hidden"></div>
+      <div id="tt" class="tt"></div>
+      <p id="ttEmpty" class="sub hidden" style="margin-top:12px">这一天时间表没有课。</p>
+      <div class="moreBtns">
+        <button id="otherDay" type="button" class="ghost">补按别天的课</button>
+        <button id="extraCls" type="button" class="ghost">时间表没有的班</button>
+        <button id="typeLine" type="button" class="ghost">✍ 别的（我打字）</button>
+        <button id="recentBtn" type="button" class="ghost">最近存的文件</button>
+      </div>
+      <div id="textBox" class="card hidden">
+        <h3>打一行字（哪一班、做到哪里……）</h3>
+        <input id="progText" type="text" maxlength="300" autocomplete="off">
+        <div class="row" style="margin-top:10px"><button id="textCancel" type="button" class="ghost">不打了</button><button id="textSave" type="button">存起来</button></div>
+      </div>
+      <div id="recentBox" class="card hidden"><h3>最近存的文件</h3><div id="recent" class="links hint">（还没有）</div></div>
+    </div>
+
+    <!-- ===== CLASS: how far did this class get ===== -->
+    <div id="vClass" class="hidden">
+      <button id="clsBack" type="button" class="link">← 今天的课表</button>
+      <h2 id="clsTitle"></h2>
+      <p id="clsSub" class="sub"></p>
+      <div id="clsDone"></div>
+      <div id="clsList"></div>
+    </div>
+
+    <!-- ===== SHOOT: 1 photo › 2 paper › 3 upload, one step per screen ===== -->
+    <div id="vShoot" class="hidden">
+      <button id="shootBack" type="button" class="link">← 今天的课表</button>
+      <div class="steps"><button id="st1" type="button">① 拍照</button><button id="st2" type="button">② 哪份卷</button><button id="st3" type="button">③ 上传</button></div>
+
+      <div id="s1">
+        <div class="shootBtns">
+          <button id="liveBtn" type="button" class="big hidden">📷 开相机拍</button>
+          <label class="btn big" id="camBtn">📷 拍一页<input id="cam" type="file" accept="image/*" capture="environment" class="hidden"></label>
+          <label class="btn ghost small">🖼 从相册选（可以一次选很多张）<input id="gallery" type="file" accept="image/*" multiple class="hidden"></label>
+        </div>
+        <div id="camWhy" class="card hidden"><span id="camWhyText" style="white-space:pre-line"></span>
+          <div class="links"><a id="camWhyLink" href="https://jrchan-lab.github.io/jr-scan/" target="_blank" rel="noopener">https://jrchan-lab.github.io/jr-scan/</a></div>
+          <div class="row"><button id="camWhyCopy" class="ghost">📋 复制网址</button></div>
+        </div>
+        <p id="pagesHint" class="hint hidden">点一张照片 = 看大图（两指放大、左右滑）。</p>
+        <div id="pages" class="pages"></div>
+        <button id="clear" type="button" class="ghost hidden" style="width:100%">🗑 全部清掉（照片和名字）</button>
+      </div>
+
+      <div id="s2" class="hidden">
+        <div id="pickBox">
+          <p id="pkTitle" class="q"></p>
+          <div id="pkList" class="pkList"></div>
+          <input id="pupilType" type="text" class="hidden" placeholder="打学生名字，例如 陈小明" autocomplete="off" style="margin-top:10px">
+          <span class="hidden"><select id="paperPick"></select><select id="whoPick"></select></span>
+        </div>
+        <div id="typeBox" class="hidden">
+          <p>卷子 / 书的名字：<span class="hint">会记住，下一份不用再打。</span></p>
+          <input id="name" type="text">
+          <p style="margin-top:10px">学生名字：<span class="hint">扫学生的卷才填；扫书不用填。</span></p>
+          <input id="pupil" type="text" placeholder="例如 陈小明">
+        </div>
+      </div>
+
+      <div id="s3" class="hidden">
+        <div class="who"><div class="big" id="whoBig"></div><div class="sub" id="whoPaper" style="margin:6px 0 0"></div></div>
+        <button id="make" type="button" class="big" style="width:100%" disabled>☁ 上传</button>
+        <p id="uploadState" class="hint" role="status" aria-live="polite">还没拍照片。</p>
+        <div id="links" class="links"></div>
+        <div id="afterUp" class="hidden" style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+          <button id="nextPupil" type="button" class="big">📷 下一个学生（同一份卷）</button>
+          <button id="finishUp" type="button" class="ghost">完成，回课表</button>
+        </div>
+        <p id="pickName" class="hint fname"></p>
+      </div>
+      <span class="hidden"><input id="autocut" type="checkbox"><input id="split" type="checkbox"><input id="enhance" type="checkbox"></span>
+    </div>
+  </section>
+  <p id="ver"></p>
+</main>
+
+<div class="dock hidden" id="dock"><div class="in"><button id="dockBtn" type="button">📷 拍卷子</button></div></div>
+<div id="msg" role="status" aria-live="polite"></div>
+
+<!-- slide-up panel: every question the page asks (no browser confirm / alert boxes) -->
+<div id="sheetBg" class="hidden"></div>
+<div id="sheet" class="hidden" role="dialog" aria-modal="true"><div class="in"><p id="sheetTitle"></p><p id="sheetText"></p><div id="sheetBtns"></div></div></div>
+
+<!-- full-screen photo -->
+<div id="vw" class="hidden">
+  <img id="vwImg" alt="">
+  <div id="vwTop"><span id="vwTitle"></span><button id="vwClose" type="button">✕ 关</button></div>
+  <div id="vwHint">两指放大 · 点两下放大 · 左右滑看别页</div>
+  <div id="vwBot"><button id="vwRot" type="button">↻ 转</button><button id="vwCut" type="button">✂ 调边</button><button id="vwLeft" type="button">⬅ 往前</button><button id="vwDel" type="button" class="del">🗑 删掉这页</button></div>
+</div>
+
+<!-- corner editor layer -->
+<div id="edLayer" class="layer hidden">
+  <canvas id="edCanvas"></canvas>
+  <div class="bar">
+    <button id="edCancel" class="ghost">取消</button>
+    <button id="edFull" class="ghost">整张</button>
+    <button id="edSave">✂ 切好</button>
+  </div>
+</div>
+
+<!-- live camera layer -->
+<div id="camLayer" class="cam hidden">
+  <video id="camVideo" playsinline autoplay muted></video>
+  <canvas id="camOverlay"></canvas>
+  <div id="camTop">
+    <button id="modeOne" class="on">一页</button>
+    <button id="modeTwo">两页（书）</button>
+    <button id="autoBtn" class="on">● 自动拍：开</button>
+  </div>
+  <div id="camStatus"><i></i><span id="camStatusText"></span></div>
+  <div id="camFlash"></div>
+  <div id="camBottom">
+    <div class="side"><button id="camDone">完成</button></div>
+    <button id="camShot" aria-label="拍照"></button>
+    <div class="side r"><span id="camCount">已拍 0 页</span></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // Big C fills in JR's Apps Script web-app address (https://script.google.com/macros/s/.../exec) before the page is published on GitHub Pages.
+  // Inside Apps Script itself this stays unused (google.script.run is used instead).
+  var EXEC_URL = 'https://script.google.com/macros/s/AKfycbyxbS6gZNiC37tzVZgdoM4eJLfdWZAKOU5rGPMp-D9XRwd8DTkhQL4Braa3lYnddZ3e1A/exec';   // filled in only in the published copy (apps/scanner/publish_jr_scan.py); the address never goes into this repo
+  var VERSION = '第十四版 · 19-Nov-2026';
+  var onGoogle = typeof google !== 'undefined' && google.script && google.script.run;
+  var hasServer = !!(onGoogle || EXEC_URL);     // false = nothing to save to: the PDF is only downloaded
+  var $ = function (id) { return document.getElementById(id); };
+  var pages = [];            // {orig: dataURL, w, h, quad: [[x,y]x4] in orig px or null, cut: dataURL|null, rot: 0..3, warn}
+  var pageSerial = 0, lastSavedSignature = '', lastUploadedName = '', uploadBusy = false, uploadUnknown = false;
+  function uploadSignature_() {
+    return JSON.stringify([$('name').value.trim(), $('pupil').value.trim(), $('paperPick').value, $('whoPick').value, pages.map(function(p) {
+      return [p.uid, p.rot, p.quad, p.cut ? p.cut.length : 0];
+    })]);
+  }
+  function uploaded_() { return !!lastSavedSignature && uploadSignature_() === lastSavedSignature; }
+  function uploadStateText_(count, busy, saved, name, uncertain) {
+    if (busy) return '正在上传，请等一等，不要再按。';
+    if (!count) return '还没拍照片。';
+    if (saved) return 'Drive 收到了：' + name + '。（电脑整理、小V核卷是后面的事。）';
+    if (uncertain) return '上传结果还不确定，照片还在。先看「最近存的文件」，不要再上传一次。';
+    return '';
+  }
+  function syncUploadState_() {
+    var saved = uploaded_(), n = pages.length;
+    $('uploadState').textContent = uploadStateText_(n, uploadBusy, saved, lastUploadedName, uploadUnknown);
+    var m = $('make');            // v13 (测试报告 最痛 5): after a good upload the button turns grey 「✔ 已上传」 until a photo or the name changes
+    m.textContent = uploadBusy ? '上传中……' : saved ? '✔ 已上传' : '☁ 上传 ' + n + ' 张';
+    m.className = 'big' + (saved ? ' gone' : '');
+    m.disabled = uploadBusy || saved || !n;
+    show('afterUp', saved && !uploadBusy);
+  }
+  window.addEventListener('beforeunload', function(e) {
+    if (pages.length && uploadSignature_() !== lastSavedSignature) { e.preventDefault(); e.returnValue = ''; }
+  });
+  $('name').addEventListener('input', function () { syncUploadState_(); drawShoot(); });
+  $('pupil').addEventListener('input', function () { syncUploadState_(); drawShoot(); });
+
+  // ---------- helpers shared by every screen ----------
+  var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], WD = '日一二三四五六';
+  var GRADES = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'F1', 'F2', 'F3'];
+  var SUBJ = { MA: '数学', SC: '科学', EN: '英文', BM: '马来文', HW: '华文', SEJ: '历史' };
+  var XSUBJ = ['华文', '马来文', '英文', '数学', '科学', '历史', '作文'];
+  var MULTI = '多人', TYPE = '__type__', UNDO_MS = 10 * 60 * 1000;
+  function show(id, on) { $(id).classList.toggle('hidden', !on); }
+  var msgTimer = 0;
+  function say(text, kind) {          // v13 (合并通知): ONE message place for the whole app, just above the bottom button
+    var m = $('msg'); clearTimeout(msgTimer);
+    m.textContent = text || ''; m.className = kind || '';
+    if (text && !kind) msgTimer = setTimeout(function () { if (m.textContent === text) m.textContent = ''; }, 4000);
+  }
+  function ymd(d) { var p = function (x) { return ('0' + x).slice(-2); }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()); }
+  function dayShort(iso) { var m = /^\d{4}-(\d\d)-(\d\d)$/.exec(iso || ''); return m ? (+m[2]) + '-' + MON[+m[1] - 1] : (iso || ''); }
+  function wdOf(iso) { var t = Date.parse(iso + 'T00:00:00Z'); return isNaN(t) ? '' : WD[new Date(t).getUTCDay()]; }
+  function gradesOf(p) { return (p.cls || '').match(/[SF][1-6]/g) || []; }      // a joint class (五六年级 / 中二中三) shows under each of its grades
+  function gradeName(g) { return ((PD || {}).class_names || {})[g] || g; }
+  function subjectOf(p) {
+    var pre = (p.paper_id || '').split('-')[0];
+    if (p.kind === '回头考') return '';
+    if (SUBJ[pre]) return SUBJ[pre];
+    var m = /(数学|科学|英文|马来文|华文|历史|作文)/.exec(p.short || ''); return m ? m[1] : '';
+  }
+  function labelOf(p) { return (subjectOf(p) + ' ' + p.kind + ' ' + dayShort(p.date)).replace(/^ +/, ''); }
+  function paperName(p) {   // subject + the first word after it, e.g. 历史 Bab1 · 科学 第2课 科学室规则
+    var sub = subjectOf(p), t = p.short || '', k = sub ? t.indexOf(sub) : -1;
+    var rest = (k >= 0 ? t.slice(k + sub.length) : t).replace(/^[（(][^）)]*[）)]/, '').trim(), tok = rest.split(/\s+/).filter(Boolean);
+    var name = (tok[0] || '').replace(/第\d+堂.*$/, '');
+    if (/^第\d+课$/.test(name) && tok[1]) name += ' ' + tok[1];
+    return (sub + ' ' + name.slice(0, 16)).trim();
+  }
+  function btn(text, cls, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = cls || ''; b.textContent = text; b.onclick = fn; return b; }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function newReq() { return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
+  function stamp() {
+    var d = new Date(), p = function (x) { return ('0' + x).slice(-2); };
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());   // seconds: two saves in one minute get different names
+  }
+  function run(fn, args) {
+    if (onGoogle) return new Promise(function (ok, bad) {
+      var r = google.script.run.withSuccessHandler(ok).withFailureHandler(function (e) { bad(e && e.message ? e : new Error(String(e))); });
+      r[fn].apply(r, args);
+    });
+    if (!EXEC_URL) return Promise.reject(new Error('这个网页还没有连上 Google（服务器地址没填）。'));
+    // No custom headers => text/plain => no CORS preflight; Code.gs doPost() answers {ok,result} or {ok,error}.
+    return fetch(EXEC_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ fn: fn, args: args }) })
+      .then(function (r) { return r.text(); }, function () { throw new Error('连不上服务器，请检查网络。'); })
+      .then(function (t) {
+        var j; try { j = JSON.parse(t); } catch (e) { throw new Error('服务器的回复看不懂（可能没有设成「任何人都能用」）。'); }
+        if (j && j.ok) return j.result;
+        throw new Error((j && j.error) || '服务器出错了。');
+      });
+  }
+  function loadImage(src) {
+    return new Promise(function (ok, bad) { var im = new Image(); im.onload = function () { ok(im); }; im.onerror = bad; im.src = src; });
+  }
+
+  // ---------- slide-up panel: every question (v13: no browser confirm / alert boxes; 设计灵感 16-Oct 深色面板从底部滑上来) ----------
+  var sheetDone = null;
+  function sheet(title, text, choices) {     // choices = [{label, val, cls}] -> Promise(val | null)
+    if (sheetDone) sheetDone(null);
+    $('sheetTitle').textContent = title; $('sheetText').textContent = text || ''; show('sheetText', !!text);
+    var box = $('sheetBtns'); box.innerHTML = '';
+    return new Promise(function (ok) {
+      sheetDone = function (v) { sheetDone = null; $('sheet').classList.remove('on'); $('sheetBg').classList.remove('on'); setTimeout(function () { if (!sheetDone) { show('sheet', false); show('sheetBg', false); } }, 350); ok(v); };
+      choices.forEach(function (c) { box.appendChild(btn(c.label, c.cls || '', function () { if (sheetDone) sheetDone(c.val); })); });
+      show('sheet', true); show('sheetBg', true);
+      requestAnimationFrame(function () { requestAnimationFrame(function () { $('sheet').classList.add('on'); $('sheetBg').classList.add('on'); }); });
+    });
+  }
+  $('sheetBg').onclick = function () { if (sheetDone) sheetDone(null); };
+
+  // ---------- data: _今天的卷.json (Code.gs todayPapers <- laptop apps/scanner/today_papers.py) ----------
+  // File name = <paper_id>-<回头考|小测|加练>-<pupil or 多人>-<yyyymmdd>-原图.pdf; eval/reading/intake.py reads it back (NEW_NAME).
+  var PD = null, PROGP = [], TODAY = null;      // PD = the whole json; PROGP = papers + old_papers (paperPick and the class page index into it)
+  var PRESSED = {}, TAGGED = {};                // this phone, this visit: 'date|class_id' pressed · unknown photos already told
+  function setProgData(data) {
+    var any = data && ((data.papers || []).length || (data.old_papers || []).length || (data.classes_today || []).length || (data.days || []).length);
+    PD = any ? data : null;
+    TODAY = PD && (PD.papers || []).length ? PD : null;
+    PROGP = PD ? (PD.papers || []).concat(PD.old_papers || []) : [];
+    if (PD && !PD.days) PD.days = [{ date: PD.date, wd: '', classes: (PD.classes_today || []).map(function (c) {   // a laptop list from before v12
+      var id = c.grades.join('') + '-' + c.subject + '-?'; return { id: id, name: c.grades.map(gradeName).join('') + ' · ' + c.subject, grades: c.grades, subject: c.subject, sure: c.sure }; }) }];
+  }
+  function dayObj(date) { return ((PD && PD.days) || []).filter(function (d) { return d.date === date; })[0] || { date: date, wd: wdOf(date), classes: [] }; }
+  function clsShort(c) {       // 「三年级英文」 + 「下午班」
+    var parts = (c.name || '').split(' · ');
+    return { title: parts.slice(0, 2).join(''), sess: parts.slice(2).join(' ') };
+  }
+  function clsName(id) {       // a class id -> its name from any day in the list ('?' = an old press with no class)
+    if (id === '?') return '不知道哪班';
+    for (var i = 0; i < ((PD && PD.days) || []).length; i++) for (var j = 0; j < PD.days[i].classes.length; j++) if (PD.days[i].classes[j].id === id) { var s = clsShort(PD.days[i].classes[j]); return s.title + s.sess; }
+    return id.split('-').slice(0, 2).join('');
+  }
+  // v13 (规则乱 3): the face pressed is DONE: 「做完到第 6 面」 = faces 1-6 are finished.
+  function progLine(pr) { return pr ? '做完到第 ' + pr.face + ' 面' + (pr.quiz === '全部做完' ? ' · 整份做完' : pr.quiz === '没做' ? ' · 小测没做' : pr.quiz === '做了' ? ' · 小测做了' : '') + '（' + dayShort(pr.date) + '）' : ''; }
+  function shared(p, c) { var g = gradesOf(p).filter(function (x) { return c.grades.indexOf(x) >= 0; }); return g.length ? g : c.grades.slice(); }
+  function pgPapers(c, d) {     // {day, olds, others, recs} for class c on lesson day d (v12, unchanged)
+    var seen = {}, day = [], olds = [], others = [], recs = [];
+    PROGP.forEach(function (p, i) {
+      if (!gradesOf(p).some(function (g) { return c.grades.indexOf(g) >= 0; }) || p.date > d) return;
+      if (p.kind === '回头考') { if (p.date === d && !seen['r' + p.paper_id]) { seen['r' + p.paper_id] = 1; recs.push({ i: i, p: p }); } return; }
+      if (!p.faces || !p.faces.length || seen[p.paper_id]) return;
+      seen[p.paper_id] = 1;
+      var o = { i: i, p: p }, s = subjectOf(p), mine = (p.prog || {})[c.id];
+      var essay = c.subject === '作文' && (p.cls === c.grades.join('') || /作文|写作|WRITING|KARANGAN/i.test((p.short || '') + p.paper_id));
+      if (s && s !== c.subject && !essay) { if (!(mine && mine.quiz === '全部做完')) others.push(o); return; }   // 作文班 writes in 英文 / 马来文 (JR 2-Nov, 10-Nov)
+      if (p.date === d) day.push(o);
+      else if (!(mine && mine.quiz === '全部做完')) olds.push(o);
+    });
+    var newest = function (a, b) { return a.p.date < b.p.date ? 1 : a.p.date > b.p.date ? -1 : a.i - b.i; };
+    olds.sort(newest); others.sort(newest);
+    return { day: day, olds: olds, others: others, recs: recs };
+  }
+  var NT_LOCAL = {};             // 19-Nov v14: 「今天没有上到」 pressed on this phone: 'date|class_id' -> reason ('' = taken back)
+  function notTaught(c, date) {
+    var k = date + '|' + c.id; if (k in NT_LOCAL) return NT_LOCAL[k];
+    var hit = ((PD && PD.not_taught) || []).filter(function (x) { return x.date === date && x.class_id === c.id; }).pop();
+    return hit ? hit.reason || '没写原因' : '';
+  }
+  function pressedOn(c, date) {
+    if (PRESSED[date + '|' + c.id]) return true;
+    return PROGP.some(function (p) { var r = (p.prog || {})[c.id]; return r && r.date === date; });
+  }
+
+  // ---------- screens ----------
+  var view = 'home', homeDate = '';
+  function go(v) {
+    if (v === 'home' && pendingPD && pickFree()) { var d = pendingPD; pendingPD = null; view = 'home'; applyFresh(d); return; }   // v13.1: the fresh list waits for a safe moment
+    view = v; show('vHome', v === 'home'); show('vClass', v === 'class'); show('vShoot', v === 'shoot');
+    if (v === 'home') drawHome(); else if (v === 'class') drawClass(); else drawShoot();
+    drawDock(); window.scrollTo(0, 0);
+  }
+  function drawDock() {
+    var b = $('dockBtn'), n = pages.length, left = n && !uploaded_();
+    show('dock', !!PD || view === 'shoot' || !TODAY);
+    if (view === 'home') { b.textContent = '📷 拍卷子' + (left ? '（' + n + ' 张还没上传）' : ''); b.disabled = false; }
+    else if (view === 'class') { b.textContent = '📷 拍这一班的卷' + (left ? '（' + n + ' 张）' : ''); b.disabled = false; }
+    else if (sStep === 1) { b.textContent = n ? '下一步：哪份卷 →' : '先拍照'; b.disabled = !n; }
+    else if (sStep === 2) { b.textContent = '下一步：上传 →'; b.disabled = !pickReady(); }
+    else show('dock', false);
+  }
+  $('dockBtn').onclick = function () {
+    if (view === 'home') { shootCls = null; shootDate = homeDate; openShoot(); }
+    else if (view === 'class') { shootCls = cc; shootDate = ccDate; openShoot(); }
+    else if (sStep === 1 && pages.length) { sStep = 2; drawShoot(); window.scrollTo(0, 0); }
+    else if (sStep === 2 && pickReady()) { sStep = 3; drawShoot(); window.scrollTo(0, 0); }
+  };
+
+  // ===== HOME = today's timetable (样子 B, JR 16-Nov) =====
+  function drawHome() {
+    if (!PD) {
+      $('homeDay').textContent = ''; $('homeTitle').textContent = 'JR 扫描'; $('tt').innerHTML = '';
+      show('ttEmpty', false); show('otherDay', false); show('extraCls', false); show('typeLine', false); show('homeBackToday', false); show('unkBox', false);
+      return;
+    }
+    if (!homeDate) homeDate = PD.date;
+    var d = dayObj(homeDate), today = homeDate === PD.date, wd = d.wd || wdOf(homeDate);
+    $('homeDay').textContent = dayShort(homeDate) + ' 星期' + wd;
+    $('homeTitle').textContent = (today ? '今天 ' : dayShort(homeDate) + ' ') + d.classes.length + ' 班';
+    show('homeBackToday', !today); show('otherDay', true); show('extraCls', true); show('typeLine', true);
+    var box = $('tt'); box.innerHTML = '';
+    d.classes.forEach(function (c) {
+      var s = clsShort(c), did = pressedOn(c, homeDate);
+      var r = btn('', 'ttRow', function () { openClass(c, homeDate); });
+      var nm = el('span', 'nm', s.title); nm.appendChild(el('small', '', s.sess + (c.sure ? '' : ' · 时间表没核')));
+      var nt = notTaught(c, homeDate);
+      r.appendChild(nm); r.appendChild(el('span', 'chip ' + (did ? 'did' : nt ? 'dim' : 'wait'), did ? '按了 ✔' : nt ? '没上到' : '还没按'));
+      box.appendChild(r);
+    });
+    show('ttEmpty', !d.classes.length);
+    drawUnknown();
+  }
+  $('homeBackToday').onclick = function () { homeDate = PD.date; drawHome(); };
+  $('otherDay').onclick = function () {
+    var ds = (PD.days || []).filter(function (d) { return d.date !== homeDate; });
+    sheet('补按哪一天的课？', '记的是上课那一天，不是今天。最多 14 天。', ds.map(function (d) {
+      var n = Math.round((Date.parse(PD.date) - Date.parse(d.date)) / 86400000);
+      return { label: (n === 0 ? '今天 · ' : n === 1 ? '昨天 · ' : '') + dayShort(d.date) + ' 星期' + (d.wd || wdOf(d.date)) + ' · ' + (d.classes.length ? d.classes.length + ' 班' : '没有课'), val: d.date, cls: 'ghost' };
+    }).concat([{ label: '不用了', val: null, cls: 'ghost' }])).then(function (v) { if (v) { homeDate = v; drawHome(); window.scrollTo(0, 0); } });
+  };
+  $('extraCls').onclick = function () {
+    sheet('时间表没有的班：哪一年级？', '例如今天加课、换课。', GRADES.map(function (g) { return { label: gradeName(g), val: g, cls: 'ghost' }; }).concat([{ label: '不用了', val: null, cls: 'ghost' }])).then(function (g) {
+      if (!g) return;
+      return sheet(gradeName(g) + '：哪一科？', '', XSUBJ.map(function (s) { return { label: s, val: s, cls: 'ghost' }; })).then(function (s) {
+        if (!s) return;
+        openClass({ id: g + '-' + s + '-临时', name: gradeName(g) + ' · ' + s + ' · 时间表没有的班', grades: [g], subject: s, extra: true, sure: true }, homeDate);
+      });
+    });
+  };
+  $('typeLine').onclick = function () { show('textBox', true); $('progText').value = ''; $('progText').focus(); };
+  $('textCancel').onclick = function () { show('textBox', false); };
+  $('textSave').onclick = function () {
+    var t = $('progText').value.trim(); if (!t) { say('先打一行字。', 'bad'); return; }
+    var rec = { date: homeDate, class_id: '没选班', class_name: '没选班', grades: [], subject: '', grade: '', kind: '别的', text: t, req: newReq() };
+    $('textSave').disabled = true;
+    run('saveProgress', [pinValue, rec]).then(function (r) {
+      $('textSave').disabled = false; show('textBox', false);
+      say(r && r.date === rec.date ? '✔ 记好了：' + t.slice(0, 30) : '⚠ 存到了，可是存档程序还是旧的：日期没记到。跟大C讲一声。', r && r.date === rec.date ? 'ok' : 'bad');
+    }).catch(function (e) { $('textSave').disabled = false; say('没存到：' + e.message + '（再按一次）', 'bad'); });
+  };
+  $('recentBtn').onclick = function () { var on = $('recentBox').classList.contains('hidden'); show('recentBox', on); if (on) loadRecent(); };
+
+  // v13 (照片对按): photos the laptop could not read (typed names) are listed first; JR taps which paper it is.
+  var unkAll = false, unkOpen = false;
+  function drawUnknown() {
+    var list = ((PD && PD.unknown_scans) || []).filter(function (u) { return !TAGGED[u.file]; }), box = $('unkBox');
+    show('unkBox', !!list.length); if (!list.length) return;
+    box.innerHTML = '';
+    box.appendChild(btn('📷 ' + list.length + ' 张照片电脑认不出是哪份 ' + (unkOpen ? '▴' : '› 点这里'), 'link', function () { unkOpen = !unkOpen; drawUnknown(); }));
+    if (!unkOpen) return;
+    box.appendChild(el('p', 'note', '点「是哪份？」告诉电脑，它就会算进那份卷。'));
+    (unkAll ? list : list.slice(0, 3)).forEach(function (u) {
+      var r = el('div', 'unk'); r.appendChild(el('span', '', dayShort(u.date) + ' · ' + u.file.replace(/-原图\.pdf$/, '')));
+      r.appendChild(btn('是哪份？', '', function () { tagFlow(u.file, '', u.date); })); box.appendChild(r);
+    });
+    if (list.length > 3) box.appendChild(btn(unkAll ? '少看一点' : '还有 ' + (list.length - 3) + ' 张', 'link', function () { unkAll = !unkAll; drawUnknown(); }));
+  }
+  function guessGrade(name) {
+    var m = /([1-6])\s*年级/.exec(name); if (m) return 'S' + m[1];
+    m = /(?:\bf|form\s*|中)([1-3一二三])/i.exec(name); if (m) return 'F' + ({ '一': 1, '二': 2, '三': 3 }[m[1]] || m[1]);
+    return '';
+  }
+  function tagFlow(file, g, day) {
+    g = g === 'ask' ? '' : g || guessGrade(file);
+    if (!g) return sheet('这张是几年级的？', file.replace(/-原图\.pdf$/, ''), GRADES.map(function (x) { return { label: gradeName(x), val: x, cls: 'ghost' }; }).concat([{ label: '以后再说', val: null, cls: 'ghost' }])).then(function (x) { if (x) tagFlow(file, x, day); });
+    var seen = {}, opts = [];
+    PROGP.forEach(function (p) {
+      if (gradesOf(p).indexOf(g) < 0 || seen[p.paper_id] || (day && p.date > day)) return; seen[p.paper_id] = 1;   // printed on or before the photo's day
+      opts.push({ label: dayShort(p.date) + ' · ' + (p.kind === '回头考' ? '回头考 ' + (p.short || '').slice(0, 18) : paperName(p) || p.paper_id), val: p, cls: 'ghost', d: p.date });
+    });
+    opts.sort(function (a, b) { return a.d < b.d ? 1 : a.d > b.d ? -1 : 0; });
+    sheet('「' + file.replace(/-原图\.pdf$/, '') + '」是哪份卷？', gradeName(g) + '的卷，' + (day ? dayShort(day) + ' 以前印的，' : '') + '最新的在上面。', opts.slice(0, 14).concat([{ label: '换年级', val: 'grade', cls: 'ghost' }, { label: '以后再说', val: null, cls: 'ghost' }])).then(function (p) {
+      if (p === 'grade') { tagFlow(file, 'ask', day); return; }
+      if (!p) return;
+      var kind = p.kind === '回头考' ? '回头考' : '小测';
+      say('存的时候稍等……');
+      run('tagScan', [pinValue, file, p.paper_id, kind]).then(function () { TAGGED[file] = 1; drawUnknown(); say('✔ 记好了：这张是 ' + (paperName(p) || p.paper_id), 'ok'); })
+        .catch(function (e) { say('没存到：' + e.message, 'bad'); });
+    });
+  }
+
+  // ===== CLASS: how far it got (v13: faces 1-12 on one screen, 小测 and 这份卷 asked apart, cancel within 10 minutes) =====
+  var cc = null, ccDate = '', openPi = -1, pe = null, recSel = {}, moreOld = false, showOthers = false, lastSaved = null, clsNote = null, faceImgs = {};
+  function openClass(c, date) { cc = c; ccDate = date; openPi = -1; pe = null; recSel = {}; moreOld = false; showOthers = false; clsNote = null;
+    var it = pgPapers(c, date), own = it.day.filter(function (o) { return o.p.cls === c.grades.join(''); });
+    if (own.length === 1) openPaper(own[0].i); else if (it.day.length === 1) openPaper(it.day[0].i);   // this class's one paper that day: open it straight away
+    go('class'); }
+  function openPaper(i) {
+    var p = PROGP[i], mine = (p.prog || {})[cc.id], maxF = (p.faces || []).length ? p.faces[p.faces.length - 1].n : 1;
+    openPi = i; pe = { face: 0, view: mine ? Math.min(mine.face + 1, maxF) : 1, ask: false }; loadFaceImgs(p);
+  }
+  function photoAfter(p, kind, d) { return ((p.photos || {})[kind] || []).filter(function (x) { return x >= d; })[0] || ''; }
+  function drawClass() {
+    if (!cc) return;
+    var s = clsShort(cc);
+    $('clsTitle').textContent = s.title + ' ' + s.sess;
+    $('clsSub').textContent = dayShort(ccDate) + ' 星期' + (dayObj(ccDate).wd || wdOf(ccDate)) + (ccDate === PD.date ? '（今天）' : '') + (cc.sure === false ? ' · 时间表没核' : '');
+    drawDoneBox();
+    var list = $('clsList'); list.innerHTML = '';
+    var it = pgPapers(cc, ccDate);
+    if (it.day.length) { list.appendChild(el('div', 'sect', ccDate === PD.date ? '今天印的卷' : '那天印的卷')); it.day.forEach(function (o) { paperCard(list, o); }); }
+    if (it.recs.length) { list.appendChild(el('div', 'sect', '回头考 / 复习')); it.recs.forEach(function (o) { recCard(list, o); }); }
+    notTaughtCard(list);                     // v14: under the day's papers, so the paper's picture + numbers come first on the screen
+    if (it.olds.length) {
+      list.appendChild(el('div', 'sect', '这一班还没做完的旧卷'));
+      (moreOld ? it.olds : it.olds.slice(0, 2)).forEach(function (o) { paperCard(list, o); });
+      if (it.olds.length > 2) list.appendChild(btn(moreOld ? '少看一点' : '再看 ' + (it.olds.length - 2) + ' 份旧卷', 'link', function () { moreOld = !moreOld; drawClass(); }));
+    }
+    if (it.others.length) {
+      list.appendChild(btn(showOthers ? '收起别科的卷' : '这一年级别科的卷（' + it.others.length + ' 份）', 'link', function () { showOthers = !showOthers; drawClass(); }));
+      if (showOthers) it.others.forEach(function (o) { paperCard(list, o); });
+    }
+    if (!it.day.length && !it.recs.length && !it.olds.length) list.appendChild(el('p', 'sub', '这一班那天没有卷。按下面「拍这一班的卷」，或回课表按「✍ 别的」打一行字。'));
+    list.appendChild(el('p', 'note', '这里只记「' + s.title + s.sess + '」。同一份卷别的班也用，进那一班自己按；两班各记各的，不会互相盖掉。'));
+  }
+  function drawDoneBox() {
+    var box = $('clsDone'); box.innerHTML = '';
+    var L = lastSaved && lastSaved.key === cc.id + '|' + ccDate ? lastSaved : null;
+    if (L) {
+      var b = el('div', 'ok' + (L.bad ? ' badBox' : ''), (L.bad ? '⚠ 存到了，可是存档程序还是旧的：日期和班没记到。跟大C讲一声。\n' : '✔ 记好了：') + L.text);
+      var left = UNDO_MS - (Date.now() - L.t);
+      if (left > 0) b.appendChild(btn('按错了，取消这一条（' + Math.max(1, Math.ceil(left / 60000)) + ' 分钟内）', 'link', undoLast));
+      box.appendChild(b);
+    } else if (clsNote) box.appendChild(el('div', 'ok', clsNote));
+  }
+  setInterval(function () { if (view === 'class' && lastSaved) drawDoneBox(); }, 30000);
+  function paperCard(list, o) {
+    var p = o.p, pr = p.prog || {}, mine = pr[cc.id], open = openPi === o.i;
+    var card = el('div', 'paper' + (open ? ' open' : ''));
+    var head = btn('', 'pHead', function () {
+      if (openPi === o.i) { openPi = -1; pe = null; drawClass(); return; }
+      openPaper(o.i); drawClass(); var c = document.querySelector('.paper.open'); if (c) c.scrollIntoView({ block: 'start' });
+    });
+    head.appendChild(document.createTextNode(paperName(p) || labelOf(p)));
+    var st = '这一班：' + (mine ? progLine(mine) : '还没按');
+    Object.keys(pr).filter(function (k) { return k !== cc.id; }).forEach(function (k) { st += '\n' + clsName(k) + '：' + progLine(pr[k]) + '（各记各的）'; });
+    head.appendChild(el('span', 'st', dayShort(p.date) + ' 印 · ' + st));
+    var ph = (p.photos || {})['小测'] || [];
+    if (ph.length) head.appendChild(el('span', 'ph', '📷 ' + ph.slice(0, 2).map(dayShort).join('、') + ' 小测照片收到了'));
+    card.appendChild(head);
+    if (open && pe) card.appendChild(paperBody(p, mine));
+    list.appendChild(card);
+  }
+  // 19-Nov v14 (JR「看照片要高清，刷换要一样，照片停在那里，就在那个页数选择」 + 「为什么可以按页数，又可以选择这份卷还没有完还是全部做完了」):
+  // the picture of the face stays in one place (fixed height, never jumps); a number or a swipe chooses the face, and the picture shown IS the face
+  // chosen. The page decides 「全部做完」 itself: last face + the quiz photo is in = 全部做完; last face, no photo = asks 「小测做了吗」 once.
+  var faceHD = {};                   // 'paper_id|n' -> data URL ('' = not made, null = on its way)
+  function hdOf(p, n, then) {
+    var k = p.paper_id + '|' + n;
+    if (faceHD[k] !== undefined || !hasServer) { if (then && faceHD[k]) then(faceHD[k]); return; }
+    faceHD[k] = null;
+    run('faceHd', [pinValue, p.paper_id, n]).then(function (u) { faceHD[k] = u || ''; if (then && u) then(u); }).catch(function () { faceHD[k] = ''; });
+  }
+  function stageOf(p, faces) {
+    var n = pe.face || pe.view, f = faces.filter(function (x) { return x.n === n; })[0] || faces[0], im = faceImgs[p.paper_id] || {};
+    var st = el('div', 'stage'), img = el('img'); img.alt = '第 ' + f.n + ' 面'; img.id = 'stageImg';
+    var hd = faceHD[p.paper_id + '|' + f.n]; if (hd) img.src = hd; else if (im[f.n]) img.src = im[f.n];
+    st.appendChild(img);
+    hdOf(p, f.n, function (u) { var s = $('stageImg'); if (s && s.alt === '第 ' + f.n + ' 面') s.src = u; });
+    [f.n - 1, f.n + 1].forEach(function (k) { if (k >= 1 && k <= faces.length) hdOf(p, k); });   // the next swipe is ready
+    var cap = el('div', 'cap'); cap.appendChild(el('b', '', '第 ' + f.n + ' 面')); cap.appendChild(document.createTextNode('  ' + (f.title || '') + (pe.face ? '' : '（还没按）')));
+    st.appendChild(cap);
+    if (f.n > 1) st.appendChild(el('span', 'nav l', '‹'));
+    if (f.n < faces.length) st.appendChild(el('span', 'nav r', '›'));
+    st.appendChild(el('span', 'big', '点一下看大'));
+    var x0 = null, y0 = 0, t0 = 0;
+    st.addEventListener('pointerdown', function (e) { x0 = e.clientX; y0 = e.clientY; t0 = Date.now(); });
+    st.addEventListener('pointerup', function (e) {
+      if (x0 == null) return; var dx = e.clientX - x0, dy = e.clientY - y0; x0 = null;
+      if (Math.abs(dx) > 50 && Math.abs(dy) < 80) { var k = f.n + (dx < 0 ? 1 : -1); if (k >= 1 && k <= faces.length) { pe.face = k; pe.view = k; pe.ask = false; drawClass(); } return; }
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && Date.now() - t0 < 400) openFaceViewer(p, f.n);
+    });
+    return st;
+  }
+  function paperBody(p, mine) {
+    var body = el('div', 'pBody'), faces = p.faces || [], maxF = faces.length ? faces[faces.length - 1].n : 0;
+    if (faces.length) body.appendChild(stageOf(p, faces));
+    var q = el('div', 'q', '做完到第几面？'); q.appendChild(el('small', '', '  按最后做完的那一面' + (mine ? '；划掉的 = 上次做完的' : ''))); body.appendChild(q);
+    var grid = el('div', 'faces');
+    faces.forEach(function (fc) {
+      grid.appendChild(btn(String(fc.n), (mine && fc.n <= mine.face ? 'past' : '') + (pe.face === fc.n ? ' on' : ''), function () { pe.face = fc.n; pe.view = fc.n; pe.ask = false; drawClass(); }));
+    });
+    body.appendChild(grid);
+    if (!pe.face) { body.appendChild(el('p', 'note', '按一个数字，或在图上左右刷，再按存起来。')); return body; }
+    var will = function (text) { var w = el('div', 'willSave'); w.appendChild(document.createTextNode('这样会记：')); w.appendChild(el('b', '', text)); body.appendChild(w); };
+    var ph = photoAfter(p, '小测', ccDate), last = pe.face === maxF, row = el('div', 'saveRow');
+    if (pe.ask) {
+      var a = el('div', 'ask', '电脑已经收到 ' + dayShort(pe.ask) + ' 这份卷的小测照片。小测真的没做？');
+      var r = el('div', 'saveRow');
+      r.appendChild(btn('改成：小测做了 · 存', '', function () { faceSave(p, last ? '全部做完' : '做了'); }));
+      r.appendChild(btn('对，小测没做 · 存', 'ghost', function () { faceSave(p, '没做', true); }));
+      a.appendChild(r); body.appendChild(a); return body;
+    }
+    if (last && ph) {                       // the quiz photo is in: the computer fills in 全部做完
+      will('整份做完（📷 ' + dayShort(ph) + ' 小测照片收到了）');
+      row.appendChild(btn('✔ 存起来', 'one', function () { faceSave(p, '全部做完', false, '照片'); }));
+    } else if (last) {
+      body.appendChild(el('div', 'q', '最后一面了。小测做了吗？'));
+      row.appendChild(btn('小测做了 · 存', '', function () { faceSave(p, '全部做完'); }));
+      row.appendChild(btn('小测还没做 · 存', '', function () { faceSave(p, '没做'); }));
+      body.appendChild(row);
+      will('小测做了 = 整份做完；还没做 = 做完到第 ' + pe.face + ' 面，小测没做'); return body;
+    } else {
+      will('做完到第 ' + pe.face + ' 面');
+      body.appendChild(el('div', 'q', '小测呢？'));
+      row.appendChild(btn('小测做了 · 存起来', '', function () { faceSave(p, '做了'); }));
+      row.appendChild(btn('小测没做 · 存起来', '', function () { faceSave(p, '没做'); }));
+    }
+    body.appendChild(row);
+    return body;
+  }
+  // 19-Nov v14 (JR「需要一个选择就是没有上到，原因还是什么」): the class met but the lesson was not reached, with the reason (a must).
+  var NT_REASONS = ['没时间', '学生没来', '先做旧卷', '自己写'], ntOpen = false, ntSel = '';
+  function notTaughtCard(list) {
+    var had = notTaught(cc, ccDate);
+    if (had && !ntOpen) { list.appendChild(el('div', 'ok', '已记：这一天没有上到（' + had + '）。上了的话，照常按下面的卷就好。')); return; }
+    if (!ntOpen) { var b = btn('这一班今天没有上到？按原因', 'ghost', function () { ntOpen = true; ntSel = ''; drawClass(); }); b.style.width = '100%'; b.style.marginTop = '8px'; list.appendChild(b); return; }
+    var card = el('div', 'card');
+    card.appendChild(el('h3', '', '没有上到，为什么？'));
+    var g = el('div', 'reasons');
+    NT_REASONS.forEach(function (r) { g.appendChild(btn(r, ntSel === r ? 'on' : '', function () { ntSel = r; drawClass(); if (r === '自己写') setTimeout(function () { var i = $('ntText'); if (i) i.focus(); }, 30); })); });
+    card.appendChild(g);
+    if (ntSel === '自己写') { var inp = el('input'); inp.type = 'text'; inp.id = 'ntText'; inp.maxLength = 100; inp.placeholder = '打原因，例如 考试复习'; inp.style.marginTop = '8px'; card.appendChild(inp); }
+    if (ntSel) { var w = el('div', 'willSave'); w.appendChild(document.createTextNode('这样会记：')); w.appendChild(el('b', '', dayShort(ccDate) + ' 这一班没有上到（' + (ntSel === '自己写' ? '你打的原因' : ntSel) + '）')); card.appendChild(w); }
+    var row = el('div', 'saveRow');
+    row.appendChild(btn('不用了', 'ghost', function () { ntOpen = false; drawClass(); }));
+    var sv = btn(ntSel ? '存起来' : '先按原因', '', function () { ntSave(); }); sv.disabled = !ntSel; row.appendChild(sv);
+    card.appendChild(row); list.appendChild(card);
+  }
+  function ntSave() {
+    if (saving || !ntSel) return;
+    var reason = ntSel === '自己写' ? (($('ntText') || {}).value || '').trim() : ntSel;
+    if (!reason) { say('先打原因。', 'bad'); return; }
+    var rec = baseRec(); rec.grade = rec.grades[0]; rec.kind = '没上到'; rec.reason = reason; rec.req = newReq();
+    var k = ccDate + '|' + cc.id, had = k in NT_LOCAL, old = NT_LOCAL[k];
+    saving = true; say('存的时候稍等……');
+    run('saveProgress', [pinValue, rec]).then(function (r) {
+      NT_LOCAL[k] = reason; ntOpen = false;
+      saved_(rec, r, dayShort(ccDate) + ' 没有上到（' + reason + '）', function () { if (had) NT_LOCAL[k] = old; else NT_LOCAL[k] = ''; });
+      if (!PROGP.some(function (q) { var x = (q.prog || {})[cc.id]; return x && x.date === ccDate; })) delete PRESSED[k];   // the home page says 没上到, not 按了
+    }).catch(failed_);
+  }
+  function baseRec() { return { date: ccDate, class_id: cc.id, class_name: cc.name, grades: cc.grades.slice(), subject: cc.subject }; }
+  var saving = false;
+  function saved_(rec, r, text, restore) {
+    saving = false;
+    var bad = !(r && typeof r === 'object' && r.date === rec.date);   // a v11 Code.gs answers true and drops date + class: say so in red
+    PRESSED[ccDate + '|' + cc.id] = 1;
+    lastSaved = { key: cc.id + '|' + ccDate, req: rec.req, t: Date.now(), text: text, bad: bad, restore: restore };
+    clsNote = null; openPi = -1; pe = null; recSel = {};
+    say(''); drawClass(); window.scrollTo(0, 0);
+  }
+  function failed_(e) { saving = false; say('没存到：' + e.message + '（再按一次）', 'bad'); drawClass(); }
+  function faceSave(p, quiz, sure, src) {
+    if (saving) return;
+    var ph = photoAfter(p, '小测', ccDate);
+    if (quiz === '没做' && ph && !sure) { pe.ask = ph; drawClass(); return; }      // v13 照片对按: a quiz photo arrived, yet 「没做」 -> ask once
+    var f = (p.faces || []).filter(function (x) { return x.n === pe.face; })[0]; if (!f) return;
+    var rec = baseRec(); rec.grades = shared(p, cc); rec.grade = rec.grades[0];
+    rec.paper_id = p.paper_id; rec.face = f.n; rec.face_title = f.title; rec.quiz = quiz; rec.paper_sha = p.sha || ''; rec.req = newReq();
+    if (src) rec.quiz_src = src;
+    var text = (paperName(p) || p.paper_id) + ' · 做完到第 ' + f.n + ' 面 · ' + (quiz === '全部做完' ? '整份做完' : quiz === '做了' ? '小测做了' : '小测没做');
+    saving = true; say('存的时候稍等……');
+    var cid = cc.id, before = PROGP.map(function (q) { return q.paper_id === p.paper_id ? [q, (q.prog || {})[cid]] : null; }).filter(Boolean);
+    run('saveProgress', [pinValue, rec]).then(function (r) {
+      before.forEach(function (b) { var q = b[0], old = b[1]; q.prog = q.prog || {}; if (!old || old.date <= rec.date) q.prog[cid] = { face: rec.face, quiz: rec.quiz, date: rec.date }; });
+      saved_(rec, r, text, function () { before.forEach(function (b) { if (b[1]) b[0].prog[cid] = b[1]; else delete b[0].prog[cid]; }); });
+    }).catch(failed_);
+  }
+  function recCard(list, o) {
+    var p = o.p, sel = recSel[p.paper_id] || '', card = el('div', 'paper open');
+    var head = el('div', 'pHead'); head.appendChild(document.createTextNode('回头考 ' + dayShort(p.date) + ' · ' + (p.short || p.paper_id).slice(0, 22)));
+    var ph = (p.photos || {})['回头考'] || [];
+    head.appendChild(el('span', 'st', p.rec_st ? '已记：' + p.rec_st : ph.length ? '' : '还没按'));
+    if (ph.length) head.appendChild(el('span', 'ph', '📷 ' + dayShort(ph[0]) + ' 照片收到了 → 电脑当「做完」' + (p.rec_st ? '' : '（不对才按下面）')));
+    card.appendChild(head);
+    var body = el('div', 'pBody'), bs = el('div', 'recBtns');
+    ['做完', '没做'].forEach(function (st) {        // 19-Nov v14: two buttons (一半 is still accepted by Code.gs for older pages)
+      bs.appendChild(btn(st, sel === st ? 'on' : '', function () { recSel[p.paper_id] = st; drawClass(); })); });
+    body.appendChild(bs);
+    if (sel) { var r = el('div', 'saveRow'); r.appendChild(btn('回头考「' + sel + '」· 存起来', 'one', function () { recSave(o, sel); })); body.appendChild(r); }   // v13: pressed = chosen; 存 asks it once
+    card.appendChild(body); list.appendChild(card);
+  }
+  function recSave(o, status) {
+    if (saving) return;
+    var rec = baseRec(); rec.grades = shared(o.p, cc); rec.grade = rec.grades[0]; rec.kind = '回头考'; rec.paper_id = o.p.paper_id; rec.status = status; rec.req = newReq();
+    saving = true; say('存的时候稍等……');
+    var old = [o.p.rec_st, o.p.done];
+    run('saveProgress', [pinValue, rec]).then(function (r) {
+      o.p.rec_st = status; o.p.done = status === '做完';
+      saved_(rec, r, '回头考 ' + dayShort(o.p.date) + ' · ' + status, function () { o.p.rec_st = old[0]; o.p.done = old[1]; });
+    }).catch(failed_);
+  }
+  function undoLast() {
+    var L = lastSaved; if (!L || Date.now() - L.t > UNDO_MS || saving) return;
+    saving = true; say('取消中……');
+    run('undoProgress', [pinValue, L.req]).then(function () {
+      saving = false; if (L.restore) L.restore(); lastSaved = null;
+      var s = cc ? clsShort(cc) : null;
+      clsNote = '↩ 取消了：' + L.text + '。现在可以重新按。';
+      if (cc && !PROGP.some(function (p) { var r = (p.prog || {})[cc.id]; return r && r.date === ccDate; })) delete PRESSED[ccDate + '|' + cc.id];
+      say(''); drawClass();
+    }).catch(function (e) { saving = false; say('取消不到：' + e.message, 'bad'); });
+  }
+  $('clsBack').onclick = function () { homeDate = ccDate; go('home'); };
+  function loadFaceImgs(p) {
+    if (!p || faceImgs[p.paper_id] !== undefined || !hasServer) return Promise.resolve();
+    faceImgs[p.paper_id] = null;
+    return run('faceThumbs', [pinValue, p.paper_id]).then(function (r) {
+      faceImgs[p.paper_id] = r || {};
+      if (view === 'class' && openPi >= 0 && PROGP[openPi] && PROGP[openPi].paper_id === p.paper_id) drawClass();   // v13.1: redraw only for the paper on screen
+    }).catch(function () { faceImgs[p.paper_id] = {}; });
+  }
+  var prefetched = false;
+  function prefetchThumbs() {   // v13.1: one paper at a time in the background, newest first, so a class opens with its pictures ready
+    if (prefetched || !PD) return; prefetched = true;
+    var list = PROGP.filter(function (p) { return p.kind !== '回头考' && (p.faces || []).length; })
+      .sort(function (a, b) { return (b.date || '') < (a.date || '') ? -1 : (b.date || '') > (a.date || '') ? 1 : 0; }).slice(0, 12);
+    list.reduce(function (pr, p) { return pr.then(function () { return loadFaceImgs(p); }); }, Promise.resolve());
+  }
+  function openFaceViewer(p, n) {      // v14: the big picture (faceHd), the small one until it arrives; swiping works the same as on the photos
+    var im = faceImgs[p.paper_id] || {}, list = p.faces || [];
+    openViewer(list.map(function (f) { return { title: '第 ' + f.n + ' 面', thumb: im[f.n], src: function () {
+      var k = p.paper_id + '|' + f.n;
+      if (faceHD[k]) return faceHD[k];
+      return new Promise(function (ok) { hdOf(p, f.n, ok); setTimeout(function () { ok(faceHD[k] || im[f.n] || ''); }, faceHD[k] === '' ? 0 : 9000); });
+    } }; }), Math.max(0, list.map(function (f) { return f.n; }).indexOf(n)), false, function (i) {
+      if (pe && list[i]) { pe.face = list[i].n; pe.view = list[i].n; pe.ask = false; drawClass(); }   // the face looked at = the face chosen
+    });
+  }
+
+  // ===== SHOOT: ① 拍照 › ② 哪份卷 › ③ 上传 (one step per screen) =====
+  var sStep = 1, shootCls = null, shootDate = '', pkStep = '', curGrade = '', whoChosen = false;
+  function openShoot() {
+    sStep = 1;
+    if (shootCls && !picked()) { pkStep = 'cls'; }
+    go('shoot');
+  }
+  function picked() { var i = $('paperPick').value; return (PROGP.length && i !== '' && i !== TYPE) ? PROGP[+i] || null : null; }
+  function typing() { return !TODAY || $('paperPick').value === TYPE; }
+  function pickReady() { return typing() || (!!picked() && whoChosen); }
+  function namesFor(cls) {
+    var out = [], parts = (cls || '').match(/[SF][1-6]/g) || [];
+    parts.forEach(function (c) { ((PD || {}).classes || {})[c] && PD.classes[c].forEach(function (n) { if (out.indexOf(n) < 0 && !(PD.paused || {})[n]) out.push(n); }); });
+    return out;
+  }
+  function pickedBase() {
+    var p = picked(); if (!p) return '';
+    return (p.paper_id + '-' + p.kind + '-' + ($('whoPick').value || MULTI) + '-' + ymd(new Date())).replace(/[\\/:*?"<>|]/g, '-');
+  }
+  function setWho(n) {          // the hidden select is the state store (file-name rule unchanged since v8); a typed name gets its own option
+    var w = $('whoPick');
+    if (n && ![].some.call(w.options, function (x) { return x.value === n; })) { var o = document.createElement('option'); o.value = n; o.textContent = n; w.appendChild(o); }
+    w.value = n || ''; whoChosen = !!n;
+  }
+  function setPaper(i) {
+    $('paperPick').value = i === '' ? '' : String(i); setWho(''); show('pupilType', false);
+    var p = picked(); try { localStorage.setItem('jrScanPaper', p ? p.paper_id + '|' + p.kind + '|' + p.date : ''); } catch (e) {}
+  }
+  function papersFor(g) {   // [{i, p, label}] : this grade, newest day first; the same paper_id + kind printed twice = one button
+    var out = [], seen = {};
+    PROGP.forEach(function (p, i) {
+      if (gradesOf(p).indexOf(g) < 0) return;
+      var k = p.paper_id + '|' + p.kind; if (seen[k]) return; seen[k] = 1;
+      out.push({ i: i, p: p, label: labelOf(p) + (p.short ? ' · ' + (p.kind === '回头考' ? p.short.slice(0, 14) : paperName(p)) : '') });
+    });
+    out.sort(function (a, b) { return a.p.date < b.p.date ? 1 : a.p.date > b.p.date ? -1 : a.i - b.i; });
+    return out;
+  }
+  function gradesWithPapers() { return GRADES.filter(function (g) { return PROGP.some(function (p) { return gradesOf(p).indexOf(g) >= 0; }); }); }
+  function drawShoot() {
+    if (view !== 'shoot') return;
+    ['st1', 'st2', 'st3'].forEach(function (id, k) { $(id).className = (sStep === k + 1 ? 'on' : '') + (k === 0 && pages.length || k === 1 && pickReady() ? ' did' : ''); });
+    show('s1', sStep === 1); show('s2', sStep === 2); show('s3', sStep === 3);
+    show('clear', sStep === 1 && pages.length > 0); show('pagesHint', pages.length > 0);
+    if (sStep !== 1 && $('msg').className === 'bad' && /红框/.test($('msg').textContent)) say('');
+    if (sStep === 2) drawPick();
+    if (sStep === 3) drawUp();
+    drawDock();
+  }
+  $('st1').onclick = function () { sStep = 1; drawShoot(); };
+  $('st2').onclick = function () { if (pages.length) { sStep = 2; drawShoot(); } };
+  $('st3').onclick = function () { if (pages.length && pickReady()) { sStep = 3; drawShoot(); } };
+  $('shootBack').onclick = function () { if (sStep > 1) { sStep--; drawShoot(); } else go(shootCls ? 'class' : 'home'); };
+  function pkBtn(list, text, cls, fn) { list.appendChild(btn(text, 'pk ' + (cls || ''), fn)); }
+  function drawPick() {
+    var list = $('pkList'); list.innerHTML = ''; show('typeBox', typing()); show('pickBox', !!TODAY);
+    if (!TODAY) return;
+    var p = picked();
+    if ($('paperPick').value === TYPE) { $('pkTitle').textContent = '不在单子上：在下面打字'; pkBtn(list, '← 回去按卷', 'wide', function () { setPaper(''); pkStep = shootCls ? 'cls' : 'grade'; drawShoot(); }); return; }
+    if (p) {             // ③ whose paper
+      $('pkTitle').textContent = '谁的卷？（' + (paperName(p) || labelOf(p)) + '）';
+      pkBtn(list, '← 换一份卷', 'wide', function () { setPaper(''); drawShoot(); });
+      pkBtn(list, '👥 多人（整班一起拍）', 'wide' + ($('whoPick').value === MULTI && whoChosen ? ' on' : ''), function () { setWho(MULTI); sStep = 3; drawShoot(); });
+      namesFor(p.cls).forEach(function (n) { pkBtn(list, n, $('whoPick').value === n && whoChosen ? 'on' : '', function () { setWho(n); sStep = 3; drawShoot(); }); });
+      pkBtn(list, '✍ 名字不在单子上（卷还是这份）', 'wide', function () { show('pupilType', true); $('pupilType').value = ''; $('pupilType').focus(); });
+      if (!$('pupilType').classList.contains('hidden')) pkBtn(list, '用这个名字 →', 'wide on', function () { var n = $('pupilType').value.trim().replace(/[\\/:*?"<>|]/g, ''); if (!n) { say('先打名字。', 'bad'); return; } setWho(n); sStep = 3; drawShoot(); });
+      return;
+    }
+    if (pkStep === 'cls' && shootCls) {     // came from a class: only that class's papers
+      var it = pgPapers(shootCls, shootDate || PD.date), s = clsShort(shootCls);
+      $('pkTitle').textContent = '哪份卷？（' + s.title + s.sess + '）';
+      it.day.concat(it.recs, it.olds.slice(0, 4)).forEach(function (o) {
+        pkBtn(list, (o.p.kind === '回头考' ? '回头考 ' + dayShort(o.p.date) + ' · ' + (o.p.short || '').slice(0, 14) : (paperName(o.p) || labelOf(o.p)) + ' · ' + dayShort(o.p.date) + ' 印'), 'wide', function () { setPaper(o.i); drawShoot(); });
+      });
+      pkBtn(list, '别的卷（按年级找）', 'wide', function () { pkStep = 'grade'; curGrade = ''; drawShoot(); });
+    } else if (!curGrade) {
+      $('pkTitle').textContent = '哪一年级的卷？';
+      gradesWithPapers().forEach(function (g) { pkBtn(list, gradeName(g), '', function () { curGrade = g; drawShoot(); }); });
+    } else {
+      $('pkTitle').textContent = gradeName(curGrade) + '：哪份卷？（新的在上面）';
+      pkBtn(list, '← 换年级', 'wide', function () { curGrade = ''; drawShoot(); });
+      var last = '';
+      papersFor(curGrade).forEach(function (o) {
+        var h = o.p.date === PD.date ? '今天 ' + dayShort(o.p.date) : dayShort(o.p.date) + ' 印的';
+        if (h !== last) { list.appendChild(el('div', 'pkHead', h)); last = h; }
+        pkBtn(list, o.label, 'wide', function () { setPaper(o.i); drawShoot(); });
+      });
+    }
+    pkBtn(list, '✍ 不在单子上（书 / 别的卷，自己打字）', 'wide', function () { $('paperPick').value = TYPE; setWho(''); drawShoot(); });
+  }
+  $('pupilType').addEventListener('input', function () { /* the 「用这个名字」 button is drawn once the box shows */ });
+  function drawUp() {
+    var p = picked(), who = $('whoPick').value, n = pages.length;
+    if (p) {
+      $('whoBig').innerHTML = '';
+      $('whoBig').appendChild(document.createTextNode('这是 ')); $('whoBig').appendChild(el('b', '', who === MULTI ? '全班（多人）' : who)); $('whoBig').appendChild(document.createTextNode(' 的卷'));
+      $('whoPaper').textContent = (paperName(p) || labelOf(p)) + ' · ' + labelOf(p) + ' · ' + n + ' 张';
+      $('pickName').textContent = '文件名：' + pickedBase() + '-原图.pdf';
+    } else {
+      var pu = $('pupil').value.trim();
+      $('whoBig').textContent = pu ? '这是 ' + pu + ' 的卷' : '这份没有学生名字';
+      $('whoPaper').textContent = ($('name').value.trim() || '（还没打名字）') + ' · ' + n + ' 张';
+      $('pickName').textContent = '';
+    }
+    syncUploadState_();
+  }
+  function resetPhotos(keepPaper) {
+    pages = []; lastSavedSignature = ''; lastUploadedName = ''; uploadUnknown = false;
+    $('links').innerHTML = ''; setWho(''); $('pupil').value = ''; show('pupilType', false);
+    if (!keepPaper) { setPaper(''); curGrade = ''; }
+    $('name').value = savedName() || '扫描-' + stamp();
+    if (!liveOK) $('camBtn').firstChild.nodeValue = '📷 拍一页';
+    drawPages();
+  }
+  $('nextPupil').onclick = function () { resetPhotos(true); sStep = 1; drawShoot(); window.scrollTo(0, 0); say('照片和名字清掉了，卷还是同一份。拍下一个学生。'); };
+  $('finishUp').onclick = function () { resetPhotos(false); go(shootCls ? 'class' : 'home'); };
+
+  // ===== full-screen photo: pinch, double tap, swipe (v13 测试报告 最痛 1) =====
+  var VW = { items: [], i: 0, tools: false, base: 1, s: 1, tx: 0, ty: 0, pts: {}, pinch: null, st: null, lastTap: 0 };
+  function openViewer(items, i, tools, onClose) {
+    if (!items.length) return;
+    VW.items = items; VW.tools = tools; VW.onClose = onClose || null; show('vw', true); show('vwBot', tools); document.body.style.overflow = 'hidden'; vwShow(i);
+  }
+  function vwShow(i) {
+    VW.i = Math.max(0, Math.min(VW.items.length - 1, i));
+    var it = VW.items[VW.i], t = $('vwTitle'); t.textContent = (it.title || '') + '  ' + (VW.i + 1) + ' / ' + VW.items.length;
+    if (it.warn) { var w = el('i', '', '  ⚠ ' + it.warn); t.appendChild(w); }
+    $('vwLeft').disabled = VW.i === 0;
+    var img = $('vwImg'), shown = false; img.style.visibility = 'hidden';
+    if (it.thumb) { img.onload = function () { vwFit(); img.style.visibility = ''; shown = true; }; img.src = it.thumb; }   // v14: the small picture at once, the big one swaps in
+    Promise.resolve(typeof it.src === 'function' ? it.src() : it.src).then(function (url) {
+      if (VW.items[VW.i] !== it || !url || url === img.src) return;
+      var w0 = img.naturalWidth;
+      img.onload = function () {
+        if (shown && VW.s > 1.01 && w0) { VW.base = VW.base * w0 / img.naturalWidth; vwApply(); }   // already zoomed: same size on screen, just sharper
+        else vwFit();
+        img.style.visibility = ''; shown = true;
+      };
+      img.src = url;
+    });
+  }
+  function vwFit() {
+    var im = $('vwImg'), W = innerWidth, H = innerHeight, top = 64, bot = VW.tools ? 80 : 12;
+    VW.base = Math.min(W / im.naturalWidth, (H - top - bot) / im.naturalHeight); VW.s = 1;
+    VW.tx = (W - im.naturalWidth * VW.base) / 2; VW.ty = top + ((H - top - bot) - im.naturalHeight * VW.base) / 2; vwApply();
+  }
+  function vwApply() { $('vwImg').style.transform = 'translate(' + VW.tx + 'px,' + VW.ty + 'px) scale(' + (VW.base * VW.s) + ')'; }
+  function vwZoomAt(cx, cy, s) { s = Math.max(1, Math.min(6, s)); var k = s / VW.s; VW.tx = cx - (cx - VW.tx) * k; VW.ty = cy - (cy - VW.ty) * k; VW.s = s; if (s === 1) vwFit(); else vwApply(); }
+  function vwClose() { var cb = VW.onClose, i = VW.i; VW.onClose = null; show('vw', false); document.body.style.overflow = ''; VW.items = []; if (cb) cb(i); }
+  var vw = $('vw');
+  function inBars(e) { return e.target.closest && e.target.closest('#vwTop,#vwBot'); }
+  vw.addEventListener('pointerdown', function (e) {
+    if (inBars(e)) return; VW.pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var ids = Object.keys(VW.pts);
+    if (ids.length === 2) { var a = VW.pts[ids[0]], b = VW.pts[ids[1]]; VW.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), s: VW.s }; VW.st = null; }
+    else if (ids.length === 1) VW.st = { x: e.clientX, y: e.clientY, tx: VW.tx, ty: VW.ty, t: Date.now() };
+    e.preventDefault();
+  });
+  vw.addEventListener('pointermove', function (e) {
+    if (!VW.pts[e.pointerId]) return; VW.pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var ids = Object.keys(VW.pts);
+    if (ids.length === 2 && VW.pinch) { var a = VW.pts[ids[0]], b = VW.pts[ids[1]]; vwZoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, VW.pinch.s * Math.hypot(a.x - b.x, a.y - b.y) / VW.pinch.d); }
+    else if (ids.length === 1 && VW.st && VW.s > 1) { VW.tx = VW.st.tx + e.clientX - VW.st.x; VW.ty = VW.st.ty + e.clientY - VW.st.y; vwApply(); }
+  });
+  function vwUp(e) {
+    if (!VW.pts[e.pointerId]) return; delete VW.pts[e.pointerId];
+    if (Object.keys(VW.pts).length) return;
+    var st = VW.st; VW.pinch = null; VW.st = null; if (!st) return;
+    var dx = e.clientX - st.x, dy = e.clientY - st.y;
+    if (VW.s <= 1.01 && Math.abs(dx) > 60 && Math.abs(dy) < 90) { vwShow(VW.i + (dx < 0 ? 1 : -1)); return; }
+    if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && Date.now() - st.t < 300) {
+      if (Date.now() - VW.lastTap < 320) { vwZoomAt(e.clientX, e.clientY, VW.s > 1.01 ? 1 : 2.5); VW.lastTap = 0; } else VW.lastTap = Date.now();
+    }
+  }
+  vw.addEventListener('pointerup', vwUp); vw.addEventListener('pointercancel', vwUp);
+  $('vwClose').onclick = vwClose;
+  function curPage() { return VW.tools ? pages[VW.i] : null; }
+  $('vwRot').onclick = function () { var p = curPage(); if (!p) return; p.rot = (p.rot + 1) % 4; drawPages(); VW.items = pageItems(); vwShow(VW.i); };
+  $('vwCut').onclick = function () { var p = curPage(); if (!p) return; vwClose(); openEditor(p); };
+  $('vwLeft').onclick = function () { var i = VW.i; if (!VW.tools || i < 1) return; pages.splice(i - 1, 0, pages.splice(i, 1)[0]); drawPages(); VW.items = pageItems(); vwShow(i - 1); say('这页移到第 ' + i + ' 页。'); };
+  $('vwDel').onclick = function () {
+    var i = VW.i; if (!curPage()) return;
+    sheet('删掉第 ' + (i + 1) + ' 页？', '删了就没有了，要的话再拍一次。', [{ label: '🗑 删掉', val: 1 }, { label: '不要删', val: 0, cls: 'ghost' }]).then(function (v) {
+      if (!v) return; pages.splice(i, 1); drawPages();
+      if (!pages.length) { vwClose(); return; }
+      VW.items = pageItems(); vwShow(Math.min(i, pages.length - 1)); say('删掉了。现在有 ' + pages.length + ' 页。');
+    });
+  };
+  function pageItems() { return pages.map(function (p) { return { src: function () { return render(p, 2200).then(function (r) { return r.url; }); }, title: '第 ' + (pages.indexOf(p) + 1) + ' 页', warn: p.warn }; }); }
+
+  var MAX_SIDE = 2600;
+  var pinValue = '';
+  var sentAt = 0, sentBase = '';   // 21-Oct: when the last save was sent, and its name, to check Drive if the reply is unreadable
+
+  function drawPapers(data) {
+    setProgData(data);
+    var sel = $('paperPick'); sel.innerHTML = '';
+    var first = document.createElement('option'); first.value = ''; first.textContent = '-'; sel.appendChild(first);
+    PROGP.forEach(function (p, i) { var o = document.createElement('option'); o.value = String(i); o.textContent = p.paper_id + ' · ' + p.kind; sel.appendChild(o); });
+    var t = document.createElement('option'); t.value = TYPE; t.textContent = 'type'; sel.appendChild(t);
+    if (!TODAY) sel.value = TYPE;
+    homeDate = PD ? PD.date : '';
+    go(PD ? 'home' : 'shoot');
+  }
+  // v13.1 (JR 18-Nov「每次按进去都慢慢」). Measured: the page draws in 12 ms even on a slow phone; every wait is the Google server
+  // (the smallest call took 1.3–8 s). So the list saved on this phone TODAY shows at once, the server is asked in the background,
+  // and the fresh list replaces it only at a safe moment (on the home screen, no photos, no paper picked) — never under her finger.
+  var CACHE_KEY = 'jrScanToday', pendingPD = null;
+  function todayIso() { var d = new Date(), p = function (x) { return ('0' + x).slice(-2); }; return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+  function cachedToday() { try { var d = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); return d && d.date === todayIso() ? d : null; } catch (e) { return null; } }
+  function keepToday(d) { try { if (d && d.date) localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch (e) {} }
+  function pickFree() { var v = $('paperPick').value; return !pages.length && (v === '' || v === TYPE); }
+  function applyFresh(d) {
+    var keep = homeDate; drawPapers(d);
+    if (keep && PD && keep !== homeDate && (PD.days || []).some(function (x) { return x.date === keep; })) { homeDate = keep; drawHome(); }
+  }
+  function loadToday() {
+    if (!hasServer) { drawPapers(null); return; }
+    var had = !!PD;
+    run('todayPapers', [pinValue]).then(function (d) {
+      keepToday(d);
+      if (!had || (view === 'home' && pickFree())) applyFresh(d); else pendingPD = d;
+      prefetchThumbs();
+    }).catch(function (e) {
+      if (/密码/.test(e.message)) { try { localStorage.removeItem('jrScanPin'); localStorage.removeItem(CACHE_KEY); } catch (x) {} show('app', false); show('pinBox', true); return; }
+      if (had) say('连不上 Google：先用这部手机今天存的课表。', 'bad'); else drawPapers(null);
+    });
+  }
+  window.__jrDrawPapers = drawPapers;   // local test only (tests/phone-375): feed a saved _今天的卷.json without Google
+
+  // ---------- start: PIN or straight in ----------
+  function start() {
+    $('name').value = savedName() || '扫描-' + stamp();
+    applyCamUi();
+    if (!hasServer) { show('app', true); drawPapers(null); say('这个网页还没有连上 Google（服务器地址没填）。\n可以先拍照、做 PDF，但 PDF 只会下载到这台机器，不会存到 Drive。', 'bad'); return; }
+    try { pinValue = localStorage.getItem('jrScanPin') || ''; } catch (e) {}
+    var c = pinValue ? cachedToday() : null;
+    if (c) { show('app', true); drawPapers(c); }          // v13.1: today's list from this phone, at once
+    if (pinValue) { enterApp(); return; }                  // v13.1: PIN saved = skip the pinNeeded round trip; a wrong PIN comes back from todayPapers
+    run('pinNeeded', []).then(function (need) {
+      if (need && !pinValue) { show('pinBox', true); return; }
+      enterApp();
+    }).catch(function (e) { show('app', true); drawPapers(null); say('连不上：' + e.message, 'bad'); });
+  }
+  function enterApp() { show('pinBox', false); show('app', true); loadToday(); }
+  $('pinGo').onclick = function () {
+    pinValue = $('pin').value.trim();
+    run('listRecent', [pinValue]).then(function (files) {
+      try { localStorage.setItem('jrScanPin', pinValue); } catch (e) {}
+      enterApp(); drawRecent(files);
+    }).catch(function (e) { say(e.message, 'bad'); });
+  };
+  function loadRecent() {
+    if (!hasServer) return;
+    run('listRecent', [pinValue]).then(drawRecent).catch(function (e) {
+      if (/密码/.test(e.message)) { try { localStorage.removeItem('jrScanPin'); } catch (x) {} show('app', false); show('pinBox', true); }
+    });
+  }
+  function drawRecent(files) {
+    var box = $('recent');
+    if (!files || !files.length) { box.textContent = '（还没有）'; return; }
+    box.innerHTML = '';
+    files.forEach(function (f) { var a = document.createElement('a'); a.href = f.url; a.target = '_blank'; a.textContent = '📄 ' + f.name; box.appendChild(a); });
+  }
+
+  // ---------- OpenCV (only for finding the paper's corners), loaded once, on first need ----------
+  var cvPromise = null;
+  function getCv() {
+    if (cvPromise) return cvPromise;
+    cvPromise = new Promise(function (ok, bad) {
+      say('第一次用「自动切边」要下载工具（约 9 MB），请等一下……');
+      var s = document.createElement('script');
+      s.src = 'https://docs.opencv.org/4.8.0/opencv.js'; s.async = true;
+      // The OpenCV module object is "thenable"; resolving a Promise WITH it loops forever and freezes the page.
+      // So resolve with a plain wrapper {cv: module}, never with the module itself.
+      s.onload = function () {
+        var done = false, give = function (m) { if (done) return; done = true; window.cv = m; say('切边工具好了。'); ok({ cv: m }); };
+        var wait = function () {
+          var m = window.cv;
+          if (m && m.Mat) give(m);
+          else if (m && typeof m.then === 'function') m.then(function (r) { give(r && r.Mat ? r : window.cv); });
+          else if (m) m.onRuntimeInitialized = function () { give(window.cv); };
+          else setTimeout(wait, 100);
+        };
+        wait();
+      };
+      s.onerror = function () { bad(new Error('切边工具下载不到')); };
+      document.head.appendChild(s);
+      setTimeout(function () { bad(new Error('切边工具太久没下载好')); }, 60000);
+    }).catch(function (e) { cvPromise = null; throw e; });
+    return cvPromise;
+  }
+  // Largest sensible 4-corner shape = the paper. Text is closed away first; returns corners in canvas pixels, or null
+  // (null also when the paper already fills the photo: then nothing needs cutting).
+  function findPaper(cv, canvas) {
+    var src = cv.imread(canvas), sm = new cv.Mat(), g = new cv.Mat(), e = new cv.Mat(), cs = new cv.MatVector(), h = new cv.Mat();
+    var s = Math.min(1, 640 / Math.max(canvas.width, canvas.height)), best = null, bestA = 0;
+    try {
+      cv.resize(src, sm, new cv.Size(Math.round(canvas.width * s), Math.round(canvas.height * s)), 0, 0, cv.INTER_AREA);
+      cv.cvtColor(sm, g, cv.COLOR_RGBA2GRAY);
+      cv.GaussianBlur(g, g, new cv.Size(5, 5), 0);
+      var k = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(11, 11));
+      cv.morphologyEx(g, g, cv.MORPH_CLOSE, k); k.delete();
+      cv.Canny(g, e, 30, 90);
+      var k2 = cv.Mat.ones(5, 5, cv.CV_8U); cv.dilate(e, e, k2); k2.delete();
+      cv.findContours(e, cs, h, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      var A = g.rows * g.cols;
+      for (var i = 0; i < cs.size(); i++) {
+        var c = cs.get(i), a = cv.contourArea(c);
+        if (a > A * 0.25 && a < A * 0.9 && a > bestA) {
+          var hull = new cv.Mat(); cv.convexHull(c, hull, false, true);
+          var peri = cv.arcLength(hull, true), eps = [0.02, 0.03, 0.045, 0.06];
+          for (var j = 0; j < eps.length; j++) {
+            var ap = new cv.Mat(); cv.approxPolyDP(hull, ap, eps[j] * peri, true);
+            if (ap.rows === 4) {
+              bestA = a; best = [];
+              for (var q = 0; q < 4; q++) best.push([ap.data32S[q * 2] / s, ap.data32S[q * 2 + 1] / s]);
+              ap.delete(); break;
+            }
+            ap.delete();
+          }
+          hull.delete();
+        }
+        c.delete();
+      }
+    } finally { src.delete(); sm.delete(); g.delete(); e.delete(); cs.delete(); h.delete(); }
+    return best ? order(best) : null;
+  }
+  function order(q) {   // top-left, top-right, bottom-right, bottom-left
+    var s = q.slice().sort(function (a, b) { return (a[0] + a[1]) - (b[0] + b[1]); });
+    var tl = s[0], br = s[3], rest = [s[1], s[2]].sort(function (a, b) { return (a[1] - a[0]) - (b[1] - b[0]); });
+    return [tl, rest[0], br, rest[1]];
+  }
+
+  // ---------- perspective cut in plain JS (works even when OpenCV is not loaded) ----------
+  function solve(A, b) {   // 8x8 Gaussian elimination
+    var n = b.length, i, j, k;
+    for (i = 0; i < n; i++) A[i].push(b[i]);
+    for (i = 0; i < n; i++) {
+      var p = i; for (j = i + 1; j < n; j++) if (Math.abs(A[j][i]) > Math.abs(A[p][i])) p = j;
+      var t = A[i]; A[i] = A[p]; A[p] = t;
+      for (j = i + 1; j < n; j++) { var f = A[j][i] / A[i][i]; for (k = i; k <= n; k++) A[j][k] -= f * A[i][k]; }
+    }
+    var x = new Array(n);
+    for (i = n - 1; i >= 0; i--) { var sum = A[i][n]; for (j = i + 1; j < n; j++) sum -= A[i][j] * x[j]; x[i] = sum / A[i][i]; }
+    return x;
+  }
+  function homography(from, to) {   // maps `to` (output) points onto `from` (source) points
+    var A = [], b = [];
+    for (var i = 0; i < 4; i++) {
+      var X = to[i][0], Y = to[i][1], x = from[i][0], y = from[i][1];
+      A.push([X, Y, 1, 0, 0, 0, -X * x, -Y * x]); b.push(x);
+      A.push([0, 0, 0, X, Y, 1, -X * y, -Y * y]); b.push(y);
+    }
+    var h = solve(A, b); h.push(1); return h;
+  }
+  function dist(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); }
+  function cutPage(page) {
+    return loadImage(page.orig).then(function (im) { page.cut = warp(im, page.quad).toDataURL('image/jpeg', 0.9); });
+  }
+  function warp(im, q) {
+    {
+      var W = Math.round(Math.max(dist(q[0], q[1]), dist(q[3], q[2])));
+      var H = Math.round(Math.max(dist(q[0], q[3]), dist(q[1], q[2])));
+      var s = Math.min(1, MAX_SIDE / Math.max(W, H)); W = Math.round(W * s); H = Math.round(H * s);
+      var sc = document.createElement('canvas'); sc.width = im.naturalWidth || im.width; sc.height = im.naturalHeight || im.height;
+      var sg = sc.getContext('2d'); sg.drawImage(im, 0, 0);
+      var sd = sg.getImageData(0, 0, sc.width, sc.height).data, sw = sc.width, shh = sc.height;
+      var oc = document.createElement('canvas'); oc.width = W; oc.height = H;
+      var og = oc.getContext('2d'), out = og.createImageData(W, H), od = out.data;
+      var h = homography(q, [[0, 0], [W, 0], [W, H], [0, H]]);
+      for (var y = 0; y < H; y++) for (var x = 0; x < W; x++) {
+        var d = h[6] * x + h[7] * y + 1, u = (h[0] * x + h[1] * y + h[2]) / d, v = (h[3] * x + h[4] * y + h[5]) / d;
+        var ui = u | 0, vi = v | 0, o = (y * W + x) * 4;
+        if (ui < 0 || vi < 0 || ui >= sw || vi >= shh) { od[o] = od[o + 1] = od[o + 2] = 255; od[o + 3] = 255; continue; }
+        var si = (vi * sw + ui) * 4; od[o] = sd[si]; od[o + 1] = sd[si + 1]; od[o + 2] = sd[si + 2]; od[o + 3] = 255;
+      }
+      og.putImageData(out, 0, 0);
+      return oc;
+    }
+  }
+
+  // ---------- one photo -> one or two pages: cut, turn text level, split a book spread ----------
+  function greySmall(c, side) {
+    var s = Math.min(1, side / Math.max(c.width, c.height)), w = Math.max(1, Math.round(c.width * s)), h = Math.max(1, Math.round(c.height * s));
+    var t = document.createElement('canvas'); t.width = w; t.height = h; t.getContext('2d').drawImage(c, 0, 0, w, h);
+    var d = t.getContext('2d').getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+    for (var i = 0; i < w * h; i++) g[i] = (d[i * 4] * 299 + d[i * 4 + 1] * 587 + d[i * 4 + 2] * 114) / 1000;
+    return { g: g, w: w, h: h };
+  }
+  // Text lines make the row profile jump (line, gap, line…) when they run across, the column profile when they run down.
+  // Measured on JR's own photos 15-Oct: upright page rows 0.168 vs cols 0.099; sideways book cols 0.107 vs rows 0.085.
+  function linesRunDown(c) {
+    var m = greySmall(c, 500), g = m.g, w = m.w, h = m.h, mean = 0, i, x, y;
+    for (i = 0; i < g.length; i++) mean += g[i]; mean /= g.length;
+    var rows = new Float32Array(h), cols = new Float32Array(w);
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) if (g[y * w + x] < mean - 50) { rows[y]++; cols[x]++; }
+    var jump = function (a) { var s = 0, t = 0; for (var k = 1; k < a.length; k++) s += Math.abs(a[k] - a[k - 1]); for (k = 0; k < a.length; k++) t += a[k]; return s / (t || 1); };
+    return jump(cols) > 1.15 * jump(rows);
+  }
+  function rotate(c, quarter) {      // quarter 1 = clockwise, 3 = anticlockwise
+    var o = document.createElement('canvas'); o.width = c.height; o.height = c.width;
+    var g = o.getContext('2d'); g.translate(o.width / 2, o.height / 2); g.rotate(quarter * Math.PI / 2); g.drawImage(c, -c.width / 2, -c.height / 2);
+    return o;
+  }
+  // The book's middle (gutter) = the darkest band near the centre (38–62 %), with a small pull towards the exact centre.
+  function splitSpread(c) {
+    var m = greySmall(c, 600), g = m.g, w = m.w, h = m.h, col = new Float32Array(w), x, y;
+    for (x = 0; x < w; x++) { var s = 0; for (y = 0; y < h; y++) s += g[y * w + x]; col[x] = s / h; }
+    var best = Math.round(w / 2), bv = 1e9;
+    for (x = Math.round(w * 0.38); x < w * 0.62; x++) { var v = (col[x - 2] + col[x - 1] + col[x] + col[x + 1] + col[x + 2]) / 5 + 40 * Math.abs(x / w - 0.5); if (v < bv) { bv = v; best = x; } }
+    var cut = Math.round(best / w * c.width);
+    var mk = function (x0, x1) { var o = document.createElement('canvas'); o.width = x1 - x0; o.height = c.height; o.getContext('2d').drawImage(c, x0, 0, x1 - x0, c.height, 0, 0, x1 - x0, c.height); return o; };
+    return [mk(0, cut), mk(cut, c.width)];
+  }
+  function process(c) {
+    var auto = $('autocut').checked, step = Promise.resolve(c);
+    if (auto) step = getCv().then(function (w) {
+      var q = findPaper(w.cv, c);
+      return q ? warp(c, q) : c;
+    }).catch(function (e) { say(e.message + '。这一页没有切边。', 'bad'); return c; });
+    return step.then(function (out) {
+      if (auto && linesRunDown(out)) out = rotate(out, 3);
+      var parts = ($('split').checked && out.width > out.height * 1.15) ? splitSpread(out) : [out];
+      parts.forEach(function (p) { pages.push({ uid: ++pageSerial, orig: p.toDataURL('image/jpeg', 0.92), w: p.width, h: p.height, quad: null, cut: null, rot: 0 }); });
+      return parts.length;
+    });
+  }
+  // ---------- photo check right after taking it (JR 15-Oct: let the system catch a bad photo, not the copier) ----------
+  // Limits measured on mum's 72 real photos (15-Oct): paper brightness 184-221, sharpness 5.3-22, shadow ratio 0.56-0.81;
+  // a dark photo's paper ~80; edge sharpness (99.5th pct) real 81-300+, blurred 14. Only clear failures warn: 0 of 72 real photos warned.
+  function grey(c, side) {
+    var s = side / Math.max(c.width, c.height), w = Math.max(1, Math.round(c.width * s)), h = Math.max(1, Math.round(c.height * s));
+    var o = document.createElement('canvas'); o.width = w; o.height = h; o.getContext('2d').drawImage(c, 0, 0, w, h);
+    var d = o.getContext('2d').getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+    for (var i = 0; i < w * h; i++) g[i] = 0.299 * d[4 * i] + 0.587 * d[4 * i + 1] + 0.114 * d[4 * i + 2];
+    return { g: g, w: w, h: h };
+  }
+  function pct(a, q) { var b = Array.prototype.slice.call(a).sort(function (x, y) { return x - y; }); return b[Math.min(b.length - 1, Math.floor(q * b.length))]; }
+  function checkPhoto(c, blurMin) {
+    var issues = [], A = grey(c, 500), cells = [];
+    var y0 = Math.floor(A.h * 0.15), y1 = Math.floor(A.h * 0.85), x0 = Math.floor(A.w * 0.15), x1 = Math.floor(A.w * 0.85);
+    for (var i = 0; i < 6; i++) for (var j = 0; j < 6; j++) {
+      var v = [], ya = y0 + Math.floor(i * (y1 - y0) / 6), yb = y0 + Math.floor((i + 1) * (y1 - y0) / 6);
+      var xa = x0 + Math.floor(j * (x1 - x0) / 6), xb = x0 + Math.floor((j + 1) * (x1 - x0) / 6);
+      for (var y = ya; y < yb; y += 2) for (var x = xa; x < xb; x += 2) v.push(A.g[y * A.w + x]);
+      cells.push(pct(v, 0.9));
+    }
+    var paper = pct(cells, 0.9), shade = pct(cells, 0.1) / Math.max(1, paper);
+    if (paper < 140) issues.push('太暗');
+    else if (shade < 0.5) issues.push('影子很深');
+    var B = grey(c, 1000), hist = new Uint32Array(1024), n = 0;   // sharpness = the strongest 0.5 % of edges, so a nearly empty page is not 'blurred'
+    for (y = Math.floor(B.h * 0.2); y < Math.floor(B.h * 0.8); y++) for (x = Math.floor(B.w * 0.2); x < Math.floor(B.w * 0.8); x++) {
+      var k = y * B.w + x; hist[Math.min(1023, Math.round(Math.abs(B.g[k - 1] + B.g[k + 1] + B.g[k - B.w] + B.g[k + B.w] - 4 * B.g[k])))]++; n++;
+    }
+    var top = 0, e = 1023; while (e > 0 && top + hist[e] <= 0.005 * n) { top += hist[e]; e--; }
+    if (e < (blurMin || 40)) issues.push('糊了');      // real photos 81-300+, a blurred one 14; a saved photo uses SHARP_MIN (75), the live view 40
+    return issues;
+  }
+  function addCanvas(c) {
+    var issues = checkPhoto(c, SHARP_MIN), before = pages.length;
+    return process(c).then(function (k) {
+      if (issues.length) {
+        for (var i = before; i < pages.length; i++) pages[i].warn = issues.join('、');
+        say('⚠ 第 ' + pages.length + ' 页' + issues.join('、') + '（红框那张）。点它看大图，不好就删掉重拍。', 'bad');
+      }
+      return k;
+    });
+  }
+  function fileToCanvas(file) {
+    var url = URL.createObjectURL(file);
+    return loadImage(url).then(function (im) {      // browsers apply the photo's EXIF rotation when decoding
+      var s = Math.min(1, MAX_SIDE / Math.max(im.naturalWidth, im.naturalHeight));
+      var c = document.createElement('canvas');
+      c.width = Math.round(im.naturalWidth * s); c.height = Math.round(im.naturalHeight * s);
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url); return c;
+    });
+  }
+  var queue = Promise.resolve();
+  function enqueue(job) { queue = queue.then(job).then(drawPages, function () { drawPages(); }); return queue; }
+  function addFiles(list) {
+    var files = Array.prototype.slice.call(list || []);
+    files.forEach(function (f) { enqueue(function () { say('处理照片中……'); return fileToCanvas(f).then(addCanvas); }); });
+    enqueue(function () { if (!pages.some(function (p) { return p.warn; })) say('现在有 ' + pages.length + ' 页。'); });
+  }
+  $('cam').onchange = function () { addFiles(this.files); this.value = ''; if (!liveOK) $('camBtn').firstChild.nodeValue = '📷 拍下一页'; };
+  $('gallery').onchange = function () { addFiles(this.files); this.value = ''; };
+
+  // ---------- corner editor ----------
+  var ed = null;   // {page, im, quad (orig px), scale, ox, oy, drag}
+  function openEditor(page) {
+    loadImage(page.orig).then(function (im) {
+      var q = page.quad ? page.quad.map(function (p) { return p.slice(); }) :
+        [[im.naturalWidth * .05, im.naturalHeight * .05], [im.naturalWidth * .95, im.naturalHeight * .05], [im.naturalWidth * .95, im.naturalHeight * .95], [im.naturalWidth * .05, im.naturalHeight * .95]];
+      ed = { page: page, im: im, quad: q, drag: -1 };
+      show('edLayer', true); edLayout(); edDraw();
+    });
+  }
+  function edLayout() {
+    var c = $('edCanvas'), r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+    var s = Math.min(c.width / ed.im.naturalWidth, c.height / ed.im.naturalHeight) * 0.92;
+    ed.scale = s; ed.ox = (c.width - ed.im.naturalWidth * s) / 2; ed.oy = (c.height - ed.im.naturalHeight * s) / 2; ed.dpr = dpr;
+  }
+  function edDraw() {
+    var c = $('edCanvas'), g = c.getContext('2d');
+    g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(ed.im, ed.ox, ed.oy, ed.im.naturalWidth * ed.scale, ed.im.naturalHeight * ed.scale);
+    var P = ed.quad.map(function (p) { return [ed.ox + p[0] * ed.scale, ed.oy + p[1] * ed.scale]; });
+    g.strokeStyle = '#e9b949'; g.lineWidth = 3 * ed.dpr; g.beginPath();
+    P.forEach(function (p, i) { if (i) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]); }); g.closePath(); g.stroke();
+    P.forEach(function (p) { g.beginPath(); g.arc(p[0], p[1], 16 * ed.dpr, 0, 6.3); g.fillStyle = 'rgba(233,185,73,.6)'; g.fill(); g.stroke(); });
+  }
+  function edPoint(ev) {
+    var r = $('edCanvas').getBoundingClientRect(), t = ev.touches ? ev.touches[0] : ev;
+    return [(t.clientX - r.left) * ed.dpr, (t.clientY - r.top) * ed.dpr];
+  }
+  function edDown(ev) {
+    if (!ed) return; var p = edPoint(ev), best = -1, bd = 60 * ed.dpr;
+    ed.quad.forEach(function (q, i) { var d = Math.hypot(ed.ox + q[0] * ed.scale - p[0], ed.oy + q[1] * ed.scale - p[1]); if (d < bd) { bd = d; best = i; } });
+    ed.drag = best; ev.preventDefault();
+  }
+  function edMove(ev) {
+    if (!ed || ed.drag < 0) return; var p = edPoint(ev);
+    var x = (p[0] - ed.ox) / ed.scale, y = (p[1] - ed.oy) / ed.scale;
+    ed.quad[ed.drag] = [Math.max(0, Math.min(ed.im.naturalWidth, x)), Math.max(0, Math.min(ed.im.naturalHeight, y))];
+    edDraw(); ev.preventDefault();
+  }
+  function edUp() { if (ed) ed.drag = -1; }
+  var ec = $('edCanvas');
+  ec.addEventListener('mousedown', edDown); ec.addEventListener('mousemove', edMove); window.addEventListener('mouseup', edUp);
+  ec.addEventListener('touchstart', edDown, { passive: false }); ec.addEventListener('touchmove', edMove, { passive: false }); ec.addEventListener('touchend', edUp);
+  $('edCancel').onclick = function () { ed = null; show('edLayer', false); };
+  $('edFull').onclick = function () { var p = ed.page; p.quad = null; p.cut = null; ed = null; show('edLayer', false); drawPages(); };
+  $('edSave').onclick = function () {
+    var p = ed.page; p.quad = order(ed.quad); ed = null; show('edLayer', false);
+    say('切边中……'); cutPage(p).then(function () { say('切好了。'); drawPages(); });
+  };
+
+  // ---------- render one page: cut + rotation + optional clean-up ----------
+  function render(page, maxSide) {
+    return loadImage(page.cut || page.orig).then(function (im) {
+      var w = im.naturalWidth, h = im.naturalHeight, s = Math.min(1, maxSide / Math.max(w, h));
+      var sw = Math.round(w * s), sh = Math.round(h * s), turn = page.rot % 2 === 1;
+      var c = document.createElement('canvas');
+      c.width = turn ? sh : sw; c.height = turn ? sw : sh;
+      var g = c.getContext('2d');
+      g.translate(c.width / 2, c.height / 2); g.rotate(page.rot * Math.PI / 2);
+      g.drawImage(im, -sw / 2, -sh / 2, sw, sh);
+      if ($('enhance').checked) cleanUp(g, c.width, c.height);
+      return { url: c.toDataURL('image/jpeg', 0.92), w: c.width, h: c.height };
+    });
+  }
+  // Scan look: estimate the paper's own brightness everywhere (block max, widened, then smoothed, so ink and the
+  // hand's shadow do not count as "paper"), divide by it (shadows vanish), then stretch so paper is white, ink dark.
+  function cleanUp(g, w, h) {
+    var img = g.getImageData(0, 0, w, h), d = img.data, n = w * h, i, x, y;
+    var Y = new Float32Array(n);
+    for (i = 0; i < n; i++) Y[i] = (d[i * 4] * 299 + d[i * 4 + 1] * 587 + d[i * 4 + 2] * 114) / 1000;
+    var f = Math.max(1, Math.round(Math.max(w, h) / 120)), sw = Math.ceil(w / f), sh = Math.ceil(h / f), bg = new Float32Array(sw * sh);
+    for (y = 0; y < sh; y++) for (x = 0; x < sw; x++) {
+      var m = 0;
+      for (var yy = y * f; yy < Math.min(h, y * f + f); yy++) for (var xx = x * f; xx < Math.min(w, x * f + f); xx++) { var v = Y[yy * w + xx]; if (v > m) m = v; }
+      bg[y * sw + x] = m;
+    }
+    var pass = function (a, r, isMax) {            // separable max or mean filter over a (2r+1) square
+      var t = new Float32Array(a.length), o = new Float32Array(a.length), X, R, k, acc, cnt, v;
+      for (R = 0; R < sh; R++) for (X = 0; X < sw; X++) {
+        acc = 0; cnt = 0;
+        for (k = -r; k <= r; k++) { v = a[R * sw + Math.min(sw - 1, Math.max(0, X + k))]; if (isMax) { if (v > acc) acc = v; } else acc += v; cnt++; }
+        t[R * sw + X] = isMax ? acc : acc / cnt;
+      }
+      for (R = 0; R < sh; R++) for (X = 0; X < sw; X++) {
+        acc = 0; cnt = 0;
+        for (k = -r; k <= r; k++) { v = t[Math.min(sh - 1, Math.max(0, R + k)) * sw + X]; if (isMax) { if (v > acc) acc = v; } else acc += v; cnt++; }
+        o[R * sw + X] = isMax ? acc : acc / cnt;
+      }
+      return o;
+    };
+    bg = pass(pass(bg, 2, true), 3, false);
+    var out = new Float32Array(n), hist = new Array(256).fill(0);
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+      var fx = Math.min(sw - 1, x / f), fy = Math.min(sh - 1, y / f), x0 = Math.floor(fx), y0 = Math.floor(fy);
+      var x1 = Math.min(sw - 1, x0 + 1), y1 = Math.min(sh - 1, y0 + 1), ax = fx - x0, ay = fy - y0;
+      var b = (bg[y0 * sw + x0] * (1 - ax) + bg[y0 * sw + x1] * ax) * (1 - ay) + (bg[y1 * sw + x0] * (1 - ax) + bg[y1 * sw + x1] * ax) * ay;
+      var r = Math.min(255, 255 * Y[y * w + x] / Math.max(30, b)); out[y * w + x] = r; hist[r | 0]++;
+    }
+    var lo = 0, acc2 = 0; for (i = 0; i < 256; i++) { acc2 += hist[i]; if (acc2 > n * 0.01) { lo = i; break; } }
+    var white = 235, span = Math.max(1, white - lo);
+    for (i = 0; i < n; i++) { var q = (out[i] - lo) * 255 / span; q = q < 0 ? 0 : q > 255 ? 255 : q; d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = q; }
+    g.putImageData(img, 0, 0);
+  }
+
+  // ---------- page list (v13: bigger pictures, the warning sits ON the picture, tap = full screen) ----------
+  function drawPages() {
+    var box = $('pages'); box.innerHTML = '';
+    pages.forEach(function (p, i) {
+      var card = el('div', 'page' + (p.warn ? ' bad' : ''));
+      var im = document.createElement('img'); im.alt = '第 ' + (i + 1) + ' 页'; card.appendChild(im);
+      render(p, 600).then(function (r) { im.src = r.url; });
+      card.appendChild(el('span', 'n', String(i + 1) + (p.cut ? ' ✂' : '')));
+      if (p.warn) card.appendChild(el('span', 'w', '⚠ ' + p.warn));
+      card.onclick = function () { openViewer(pageItems(), i, true); };
+      box.appendChild(card);
+    });
+    if (!pages.some(function (p) { return p.warn; }) && /照片|糊|影子|太暗/.test($('msg').textContent)) say('');   // the warning went with its page
+    syncUploadState_(); drawShoot(); if (view !== 'shoot') drawDock();
+  }
+  $('enhance').onchange = drawPages;
+  $('clear').onclick = function () {
+    sheet('全部清掉？', '照片和学生名字都清掉（卷还记着，下一个学生直接拍）。', [{ label: '🗑 清掉', val: 1 }, { label: '不要', val: 0, cls: 'ghost' }]).then(function (v) {
+      if (v) { resetPhotos(true); say('已经清掉：照片和名字。'); }
+    });
+  };
+  // 16-Oct JR: 「名字能不能自动命名」. The paper / book name is remembered on this phone; only the pupil's name is typed each time.
+  // (A pupil's handwritten name is not read automatically: a wrong guess would file one child's script under another child.)
+  function savedName() { try { return localStorage.getItem('jrScanName') || ''; } catch (e) { return ''; } }
+
+  // ---------- build the two PDFs ----------
+  function fit(doc, r, x, y, w, h, margin) {
+    var bw = w - 2 * margin, bh = h - 2 * margin, s = Math.min(bw / r.w, bh / r.h);
+    var iw = r.w * s, ih = r.h * s;
+    doc.addImage(r.url, 'JPEG', x + (w - iw) / 2, y + (h - ih) / 2, iw, ih);
+  }
+  function buildPdfs(rendered) {
+    var J = window.jspdf.jsPDF;
+    var plain = null;     // one photo per A4 page, page turned to match the photo
+    rendered.forEach(function (r) {
+      var o = r.w > r.h ? 'landscape' : 'portrait';
+      if (!plain) plain = new J({ unit: 'mm', format: 'a4', orientation: o }); else plain.addPage('a4', o);
+      var W = o === 'portrait' ? 210 : 297, H = o === 'portrait' ? 297 : 210;
+      fit(plain, r, 0, 0, W, H, 5);
+    });
+    var two = new J({ unit: 'mm', format: 'a4', orientation: 'landscape' });   // 2-up 1|2, 3|4; printed at 100%
+    for (var i = 0; i < rendered.length; i += 2) {
+      if (i > 0) two.addPage('a4', 'landscape');
+      fit(two, rendered[i], 0, 0, 148.5, 210, 5);
+      if (rendered[i + 1]) fit(two, rendered[i + 1], 148.5, 0, 148.5, 210, 5);
+    }
+    return { plain: plain, two: two };
+  }
+  function download(doc, name) {
+    var a = document.createElement('a'); a.href = URL.createObjectURL(doc.output('blob')); a.download = name; a.textContent = '⬇ 下载 ' + name; return a;
+  }
+  $('make').onclick = function () {
+    if (!pages.length || uploadBusy || uploaded_()) return;      // v13: one upload per set of photos + name (the button is grey after it)
+    if (!pickReady()) { sStep = 2; drawShoot(); say(picked() ? '先按是谁的卷（全班一起拍就按「多人」）。' : '先按哪份卷。', 'bad'); return; }
+    sentAt = 0; sentBase = '';   // never let a previous success validate this attempt
+    var nm = $('name').value.trim(), pu = $('pupil').value.trim();
+    if (typing() && nm && !/^扫描-\d{8}-\d{6}$/.test(nm)) { try { localStorage.setItem('jrScanName', nm); } catch (e) {} }
+    var base = pickedBase() || ((nm || '扫描-' + stamp()) + (pu ? '-' + pu : '')).replace(/[\\\/:*?"<>|]/g, '-');
+    var uploadSignature = '';
+    uploadBusy = true; uploadUnknown = false; syncUploadState_();
+    $('links').innerHTML = '';
+    say('做 PDF 中……（' + pages.length + ' 页）');
+    queue.then(function () {
+      uploadSignature = uploadSignature_();
+      return pages.reduce(function (p, pg) {
+        return p.then(function (acc) { return render(pg, MAX_SIDE).then(function (r) { acc.push(r); return acc; }); });
+      }, Promise.resolve([]));
+    }).then(function (rendered) {
+      var d = buildPdfs(rendered);
+      var n1 = base + '-原图.pdf';
+      if (!hasServer) { $('links').appendChild(download(d.plain, n1)); uploadBusy = false; syncUploadState_(); say('PDF 做好了，但没有连上 Google，只下载了，没有存到 Drive。', 'bad'); return; }
+      say('存到 Google Drive 中……');
+      var b64 = function (doc) { return doc.output('datauristring').split(',')[1]; };
+      sentAt = Date.now(); sentBase = base;
+      return run('savePdfs', [pinValue, [{ name: n1, base64: b64(d.plain) }]]).then(function (saved) {
+        if (!Array.isArray(saved) || !saved.length || saved.some(function(f) { return !f.name || !f.url; })) throw new Error('云端未返回文件回执。');
+        saved.forEach(function (f) { var a = document.createElement('a'); a.href = f.url; a.target = '_blank'; a.textContent = '☁ 在 Drive 打开：' + f.name; $('links').appendChild(a); });
+        lastSavedSignature = uploadSignature; lastUploadedName = saved.map(function(f) { return f.name; }).join('、'); uploadBusy = false; uploadUnknown = false; syncUploadState_();
+        say('✔ 上传好了。', 'ok'); drawShoot(); drawRecentLater();
+      });
+    }).catch(function (e) {
+      var why = '出问题了：' + (e && e.message ? e.message : e);
+      if (!sentAt) { uploadBusy = false; syncUploadState_(); say(why + '\n照片还在，还没送到 Drive。可以再按上传。', 'bad'); return; }
+      // 21-Oct (JR): Google sometimes saves the file but its reply comes back unreadable; "press again" then made a second copy.
+      // So look in Drive first: this scan's name, saved since we sent it, means it IS saved.
+      say('服务器回得怪，先看看 Drive 里有没有存到……');
+      var since = sentAt - 60000; sentAt = 0;
+      run('listRecent', [pinValue]).then(function (files) {
+        var hit = (files || []).filter(function (f) { return f.t >= since && f.name.indexOf(sentBase) === 0 && /-原图\.pdf$/.test(f.name); })[0];
+        if (hit) {
+          var a = document.createElement('a'); a.href = hit.url; a.target = '_blank'; a.textContent = '☁ 在 Drive 打开：' + hit.name; $('links').appendChild(a);
+          lastSavedSignature = uploadSignature; lastUploadedName = hit.name; uploadBusy = false; uploadUnknown = false; syncUploadState_();
+          say('✔ 上传好了（服务器回得慢）。不用再按。', 'ok'); drawRecent(files);
+        } else {
+          uploadUnknown = true; say(why + '\n还不确定 Drive 收到没有。照片还在，先看「最近存的文件」，不要再上传一次。', 'bad');
+        }
+      }).catch(function () { uploadUnknown = true; say(why + '\n暂时也查不到 Drive。照片还在，不要再上传一次。', 'bad'); })
+        .then(function () { uploadBusy = false; syncUploadState_(); drawShoot(); });
+    });
+  };
+  function drawRecentLater() { if (!$('recentBox').classList.contains('hidden')) loadRecent(); }
+
+  // ---------- live camera: guide frame + level + live checks (only on a top-level HTTPS/localhost page, never inside Apps Script) ----------
+  // Apps Script's sandboxed iframe may not call getUserMedia, so there the old file-input camera stays.
+  var liveOK = !onGoogle && window.isSecureContext !== false && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  var camStream = null, camTrack = null, camTimer = 0, camRaf = 0, camMode = 'one';
+  var camIssues = null, camIssuesAt = 0, camGreenSince = 0, camArmed = true, camSnapping = false, camLastSnap = 0, camPending = 0;
+  var tilt = null, tiltLog = [], orientOn = false, orientRefused = false;
+  var camGrab = document.createElement('canvas');
+  var GREEN = '#7fd3a0', RED = '#ef7d7d', HOLD_MS = 1500;
+  var camFrame = null;       // 17-Oct: the guide frame as fractions of the video (it now fits between the bars); frameInVideo() uses the same box
+  var camToastText = '', camToastUntil = 0, camLocked = false;   // 16-Oct JR: 1200 felt too fast
+  var REARM_MS = 800;        // after a snap, 'not ready' must last this long (the hand turning the page) before the next auto snap
+  var camPaper = null, camNotGreenSince = 0, paperGrab = document.createElement('canvas');
+  var camAuto = true, camRetries = 0, SHARP_MIN = 75;        // 16-Oct JR: 「没有准备好…怎样停」: 自动拍 关 = only the round button takes a picture
+
+  // 16-Oct: JR saw no frame and no auto-snap, and the page never said why. Without the live camera, say so on the page,
+  // name the likely cause (old Google address / opened inside WhatsApp etc. / camera refused) and give the address to open.
+  var NEW_ADDR = 'https://jrchan-lab.github.io/jr-scan/';
+  var inApp = /WhatsApp|FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Telegram|; wv\)/i.test(navigator.userAgent || '');
+  function noLiveWhy(failWhy) {
+    if (onGoogle) return '这个是【旧网址】：没有框线，也不会自动拍。\n要自动拍：用 Safari 或 Chrome 打开这个新网址 ↓';
+    if (failWhy) return '相机打不开（' + failWhy + '），所以没有框线、不会自动拍。\n如果刚才按了「不允许」：到手机设定里允许这个网页用相机，再重新打开。';
+    if (inApp) return '你是在 WhatsApp / 其他 app 里面打开的，这里开不到即时相机（没有框线、不会自动拍）。\n请按右上角「⋯」选「用 Safari / Chrome 打开」，或者复制下面的网址，贴进 Safari / Chrome ↓';
+    return '这个浏览器开不到即时相机（没有框线、不会自动拍）。\n请复制下面的网址，用 Safari 或 Chrome 打开 ↓';
+  }
+  function applyCamUi(failWhy) {
+    show('liveBtn', liveOK);
+    $('camBtn').classList.toggle('small', liveOK); $('camBtn').classList.toggle('big', !liveOK); $('camBtn').classList.toggle('ghost', liveOK);
+    if (liveOK) $('camBtn').firstChild.nodeValue = '用手机自己的相机';
+    show('camWhy', !liveOK);
+    if (!liveOK) $('camWhyText').textContent = noLiveWhy(failWhy);
+    $('ver').textContent = VERSION + ' · ' + (onGoogle ? '旧网址（Google）' : '新网址') + ' · ' + (liveOK ? '即时相机 ✓' : '即时相机 ✗') + (inApp ? ' · app 里面' : '');
+  }
+  $('camWhyCopy').onclick = function () {
+    var done = function () { $('camWhyCopy').textContent = '✅ 复制好了，去 Safari / Chrome 贴上'; };
+    try { navigator.clipboard.writeText(NEW_ADDR).then(done, function () { prompt('长按复制这个网址：', NEW_ADDR); }); }
+    catch (e) { prompt('长按复制这个网址：', NEW_ADDR); }
+  };
+  function camFail(e) {
+    var n = e && e.name || '';
+    var why = n === 'NotAllowedError' || n === 'SecurityError' ? '没有允许用相机' : n === 'NotFoundError' || n === 'OverconstrainedError' ? '找不到相机' : (e && e.message) || '原因不明';
+    liveOK = false; applyCamUi(why);
+    $('camBtn').firstChild.nodeValue = '📷 拍一页';
+    say('相机打不开（' + why + '）。改用手机自己的相机：按「📷 拍一页」。', 'bad');
+  }
+  function getStream() {
+    var md = navigator.mediaDevices;
+    return md.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false }).catch(function (e) {
+      if (e && /Overconstrained|ConstraintNotSatisfied/.test(e.name || '')) return md.getUserMedia({ video: true, audio: false });
+      throw e;
+    });
+  }
+
+  // level: deviceorientation beta/gamma, ~0 when the phone lies flat above the page
+  function onOrient(ev) {
+    if (ev.beta == null || ev.gamma == null) return;
+    var t = Date.now();
+    tilt = { beta: ev.beta, gamma: ev.gamma, t: t };
+    tiltLog.push(tilt);
+    while (tiltLog.length && tiltLog[0].t < t - 1500) tiltLog.shift();
+  }
+  function attachOrient() { if (orientOn) return; window.addEventListener('deviceorientation', onOrient); orientOn = true; }
+  function levelState() {     // null = no level on this device
+    if (!tilt || orientRefused) return null;
+    return { beta: tilt.beta, gamma: tilt.gamma, ok: Math.abs(tilt.beta) < 5 && Math.abs(tilt.gamma) < 5 };
+  }
+  function steady(now) {      // level moved less than 2 degrees over the last second (no level => cannot tell, say yes)
+    if (!tilt || orientRefused) return true;
+    var lo1 = tilt.beta, hi1 = tilt.beta, lo2 = tilt.gamma, hi2 = tilt.gamma;
+    tiltLog.forEach(function (p) {
+      if (p.t < now - 1000) return;
+      lo1 = Math.min(lo1, p.beta); hi1 = Math.max(hi1, p.beta); lo2 = Math.min(lo2, p.gamma); hi2 = Math.max(hi2, p.gamma);
+    });
+    return (hi1 - lo1) < 2 && (hi2 - lo2) < 2;
+  }
+
+  function openCamera() {
+    var perm = null;       // iOS: the permission question must be asked straight from the tap
+    try { if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') perm = DeviceOrientationEvent.requestPermission(); } catch (e) { perm = null; }
+    say('打开相机中……');
+    camLocked = false; camFrame = null;
+    try {   // 17-Oct JR: the screen must not turn with the phone. Locking needs fullscreen (Android Chrome); asked from the tap.
+      var el = document.documentElement, fs = el.requestFullscreen ? el.requestFullscreen({ navigationUI: 'hide' }) : null;
+      Promise.resolve(fs).then(function () {
+        if (screen.orientation && screen.orientation.lock) return screen.orientation.lock('portrait').then(function () { camLocked = true; });
+      }).catch(function () {});
+    } catch (e) {}
+    getStream().then(function (stream) {
+      camStream = stream; camTrack = stream.getVideoTracks()[0];
+      camTrack.addEventListener('ended', function () { if (camStream) { closeCamera(); say('相机停了，请再按一次「📷 开相机拍」。', 'bad'); } });
+      var v = $('camVideo'); v.srcObject = stream;
+      camIssues = null; camGreenSince = 0; camArmed = true; camSnapping = false; camLastSnap = 0;
+      tilt = null; tiltLog = []; orientRefused = false;
+      show('camLayer', true); document.body.style.overflow = 'hidden';
+      var pl = v.play && v.play(); if (pl && pl.catch) pl.catch(function () {});
+      if (perm && typeof perm.then === 'function') perm.then(function (st) { if (st === 'granted') attachOrient(); else orientRefused = true; }, function () { orientRefused = true; });
+      else if ('DeviceOrientationEvent' in window) attachOrient();
+      camTimer = setInterval(camCheck, 400);
+      camRaf = requestAnimationFrame(camDraw);
+      camCount(); say('相机开了。拍完按「完成」。');
+    }).catch(camFail);
+  }
+  function closeCamera() {
+    clearInterval(camTimer); cancelAnimationFrame(camRaf); camTimer = camRaf = 0;
+    if (orientOn) { window.removeEventListener('deviceorientation', onOrient); orientOn = false; }
+    if (camStream) camStream.getTracks().forEach(function (t) { t.stop(); });
+    camStream = camTrack = null;
+    $('camVideo').srcObject = null;
+    show('camLayer', false); document.body.style.overflow = '';
+    try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
+    try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {}); } catch (e) {}
+    camLocked = false;
+    enqueue(function () { if (!pages.some(function (p) { return p.warn; })) say('现在有 ' + pages.length + ' 页。'); });
+  }
+  function camCount() { $('camCount').textContent = '已拍 ' + (pages.length + camPending) + ' 页'; }
+  function camToast(text) { camToastText = text; camToastUntil = Date.now() + 3000; }
+
+  // 16-Oct JR test: the auto snap took the keyboard and the empty table, because checkPhoto() only asks bright / sharp / no deep shadow.
+  // paperIn(): is a sheet with words filling the guide frame? Cut the frame out of the video, 300 px wide, 6 x 8 cells. A cell is PAPER when its
+  // bright part is near-grey (no wood colour) and at least half of it is plain background; it has WORDS when 0.3-25 % of it is clearly darker.
+  // Measured 16-Oct on 41 real phone photos of papers (white >= 0.73, words >= 0.21: all pass) and 6 views from JR's test (keyboard, laptop,
+  // palm rest, wood: none pass). Used ONLY for the auto snap; the round button always takes the picture.
+  function pct1(a, q) { a.sort(function (x, y) { return x - y; }); return a[Math.min(a.length - 1, Math.floor(q * a.length))]; }
+  function paperIn(src, sx, sy, sw, sh) {
+    var W = 300, H = Math.max(8, Math.round(W * sh / sw));
+    paperGrab.width = W; paperGrab.height = H;
+    var g2 = paperGrab.getContext('2d'); g2.drawImage(src, sx, sy, sw, sh, 0, 0, W, H);
+    var d = g2.getImageData(0, 0, W, H).data, rows = 8, cols = 6, white = 0, ink = 0;
+    for (var i = 0; i < rows; i++) for (var j = 0; j < cols; j++) {
+      var g = [], c = [], ya = Math.floor(i * H / rows), yb = Math.floor((i + 1) * H / rows), xa = Math.floor(j * W / cols), xb = Math.floor((j + 1) * W / cols);
+      for (var y = ya; y < yb; y++) for (var x = xa; x < xb; x++) {
+        var k = (y * W + x) * 4, r = d[k], gg = d[k + 1], b = d[k + 2];
+        g.push((r + gg + b) / 3); c.push(Math.max(r, gg, b) - Math.min(r, gg, b));
+      }
+      var srt = g.slice(), p90 = pct1(srt, 0.9), med = srt[Math.floor(srt.length / 2)], cs = 0, cn = 0, dark = 0;
+      for (var m = 0; m < g.length; m++) { if (g[m] >= p90 * 0.92) { cs += c[m]; cn++; } if (g[m] < p90 * 0.55) dark++; }
+      var isWhite = p90 >= 110 && cs / Math.max(1, cn) <= 45 && med >= p90 * 0.86, df = dark / g.length;
+      if (isWhite) { white++; if (df >= 0.003 && df <= 0.25) ink++; }
+    }
+    var n = rows * cols;
+    return { white: white / n, ink: ink / n, ok: white / n >= 0.7 && ink / n >= 0.15 };
+  }
+  function frameInVideo(vw, vh) {   // the same box as frameRect(), in video pixels
+    if (camFrame) return { x: camFrame.x * vw, y: camFrame.y * vh, w: camFrame.w * vw, h: camFrame.h * vh };
+    var fh = vh * 0.88, fw = fh / 1.414;
+    if (fw > vw * 0.88) { fw = vw * 0.88; fh = fw * 1.414; }
+    return { x: (vw - fw) / 2, y: (vh - fh) / 2, w: fw, h: fh };
+  }
+
+  // live checks every ~400 ms on a small grab: the SAME checkPhoto() as after a photo.
+  // (Grab is ~1000 px, not 500: checkPhoto's sharpness test is calibrated at 1000 px and would read a smaller grab as 'blurred'.)
+  function camCheck() {
+    var v = $('camVideo');
+    if (!v.videoWidth || camSnapping) return;
+    var s = Math.min(1, 1000 / Math.max(v.videoWidth, v.videoHeight));
+    camGrab.width = Math.round(v.videoWidth * s); camGrab.height = Math.round(v.videoHeight * s);
+    camGrab.getContext('2d').drawImage(v, 0, 0, camGrab.width, camGrab.height);
+    try { camIssues = checkPhoto(camGrab); } catch (e) { camIssues = []; }
+    try { var fr = frameInVideo(camGrab.width, camGrab.height); camPaper = paperIn(camGrab, fr.x, fr.y, fr.w, fr.h); } catch (e) { camPaper = null; }
+    camIssuesAt = Date.now();
+  }
+
+  // the guide frame, inside the part of the screen the picture really covers (video is letterboxed, so frame = what gets saved)
+  function frameRect(W, H) {
+    var v = $('camVideo'), vw = v.videoWidth || W, vh = v.videoHeight || H, k = Math.min(W / vw, H / vh);
+    var rw = vw * k, rh = vh * k, rx = (W - rw) / 2, ry = (H - rh) / 2;
+    // 17-Oct JR: the words must never sit on the frame lines, so the frame fits between the status bar and the bottom buttons
+    var st = $('camStatus'), bt = $('camBottom');
+    var top = Math.max(ry, st.offsetTop + st.offsetHeight + 10), bot = Math.min(ry + rh, bt.offsetTop - 16);
+    var fh = Math.min(rh * 0.88, Math.max(80, bot - top)), fw = fh / 1.414;
+    if (fw > rw * 0.88) { fw = rw * 0.88; fh = fw * 1.414; }
+    // one page: A4 upright. two pages: the open book lies sideways on the portrait screen, so the same tall shape, spine across the middle.
+    var x = rx + (rw - fw) / 2, y = top + (bot - top - fh) / 2;
+    if (rw > 0 && rh > 0) camFrame = { x: (x - rx) / rw, y: (y - ry) / rh, w: fw / rw, h: fh / rh };
+    return { x: x, y: y, w: fw, h: fh };
+  }
+  function camDraw() {
+    camRaf = requestAnimationFrame(camDraw);
+    var L = $('camLayer'), cv = $('camOverlay'), W = L.clientWidth, H = L.clientHeight, dpr = window.devicePixelRatio || 1;
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    var g = cv.getContext('2d'), now = Date.now();
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+
+    var lv = levelState(), fresh = !!camIssues && now - camIssuesAt < 1500;
+    var issues = fresh ? camIssues : [], steadyNow = steady(now);
+    var paperOk = !!(camPaper && camPaper.ok);
+    var sideways = !camLocked && W > H;     // a phone that cannot lock the screen (iPhone) and is held sideways
+    var green = fresh && paperOk && !sideways && !issues.length && (!lv || lv.ok) && steadyNow && !camSnapping;
+    if (!green) {
+      camGreenSince = 0;
+      if (camSnapping) camNotGreenSince = 0;                       // saving the photo is not 'turning the page'
+      else if (!camNotGreenSince) camNotGreenSince = now;
+      if (camNotGreenSince && now - camNotGreenSince >= REARM_MS) camArmed = true;   // a short wobble on the same page does not re-arm
+    } else { camNotGreenSince = 0; if (!camGreenSince) camGreenSince = now; }
+    if (camAuto && green && camArmed && now - camGreenSince >= HOLD_MS && now - camLastSnap > 1500) snap();
+
+    var f = frameRect(W, H), col = green ? GREEN : RED;
+    g.fillStyle = 'rgba(0,0,0,.38)'; g.beginPath(); g.rect(0, 0, W, H); g.rect(f.x, f.y, f.w, f.h); g.fill('evenodd');
+    g.lineWidth = 5; g.strokeStyle = col; g.setLineDash([]); g.strokeRect(f.x, f.y, f.w, f.h);
+    if (camMode === 'two') {
+      g.lineWidth = 3; g.setLineDash([14, 10]); g.beginPath(); g.moveTo(f.x, f.y + f.h / 2); g.lineTo(f.x + f.w, f.y + f.h / 2); g.stroke(); g.setLineDash([]);
+    }
+    if (camAuto && green && camArmed && camGreenSince) {       // hold-still progress along the bottom edge of the frame
+      g.fillStyle = GREEN; g.fillRect(f.x, f.y + f.h + 6, f.w * Math.min(1, (now - camGreenSince) / HOLD_MS), 6);
+    }
+    if (lv) {                           // the level: dot centred = phone flat
+      var stb = $('camStatus'), R = 17, cx = W - 30, cy = stb.offsetTop + stb.offsetHeight / 2, lim = R - 5, c5 = lim * 5 / 20;
+      var dx = Math.max(-1, Math.min(1, lv.gamma / 20)) * lim, dy = Math.max(-1, Math.min(1, lv.beta / 20)) * lim;
+      g.fillStyle = 'rgba(0,0,0,.55)'; g.beginPath(); g.arc(cx, cy, R, 0, 6.3); g.fill();
+      g.lineWidth = 2; g.strokeStyle = 'rgba(255,255,255,.8)'; g.beginPath(); g.arc(cx, cy, R, 0, 6.3); g.stroke();
+      g.strokeStyle = 'rgba(255,255,255,.5)'; g.beginPath(); g.arc(cx, cy, c5, 0, 6.3); g.stroke();
+      g.beginPath(); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.stroke();
+      g.fillStyle = lv.ok ? GREEN : RED; g.beginPath(); g.arc(cx + dx, cy + dy, 5, 0, 6.3); g.fill();
+    }
+    var msg, good = false;
+    if (now < camToastUntil) msg = camToastText;
+    else if (sideways) msg = '手机转直';
+    else if (!fresh || !paperOk) msg = '对准纸';
+    else if (issues.length) msg = issues[0];
+    else if (lv && !lv.ok) msg = '手机放平';
+    else if (!steadyNow) msg = '拿稳';
+    else if (camSnapping) { msg = '拍了 ✓'; good = true; }
+    else if (!camAuto) { msg = '可以拍 · 按圆钮'; good = true; }
+    else if (camArmed) { msg = '可以拍'; good = true; }
+    else { msg = '拍了 ✓ 翻下一页'; good = true; }
+    var txt = $('camStatusText');
+    if (txt.textContent !== msg) txt.textContent = msg;
+    $('camStatus').classList.toggle('ok', good);
+  }
+
+  // ---------- take the picture: same road as a picked photo (addCanvas -> process -> pages) ----------
+  function scaleTo(src, sw, sh) {
+    var s = Math.min(1, MAX_SIDE / Math.max(sw, sh)), c = document.createElement('canvas');
+    c.width = Math.round(sw * s); c.height = Math.round(sh * s);
+    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+    return c;
+  }
+  function takeHi(frame, vw, vh) {      // a real still photo is sharper than a video frame; use it only if it arrives fast and has the same orientation
+    // 16-Oct, JR's first real script: 3 of 6 photos were shaken (the still arrives later than the green frame; the hand had moved), and the
+    // still showed MORE than the frame (a 3:4 photo vs the narrower video). So: trim the still to the video's shape, then keep it only if it is
+    // about as sharp as the video frame that passed the check.
+    return new Promise(function (ok) {
+      var done = false, fin = function (c) { if (!done) { done = true; ok(c); } };
+      setTimeout(function () { fin(frame); }, 3000);
+      try {
+        new ImageCapture(camTrack).takePhoto().then(fileToCanvas).then(function (c) {
+          if ((c.height >= c.width) !== (vh >= vw)) return fin(frame);
+          c = trimTo(c, vw / vh);
+          if (c.width * c.height < frame.width * frame.height) return fin(frame);
+          fin(sharpness(c) >= 0.7 * sharpness(frame) ? c : frame);
+        }).catch(function () { fin(frame); });
+      } catch (e) { fin(frame); }
+    });
+  }
+  function trimTo(c, aspect) {          // centre-cut a canvas to width/height = aspect (the video's view)
+    var w = c.width, h = c.height, tw = w, th = h;
+    if (w / h > aspect * 1.02) tw = Math.round(h * aspect); else if (w / h < aspect / 1.02) th = Math.round(w / aspect); else return c;
+    var o = document.createElement('canvas'); o.width = tw; o.height = th;
+    o.getContext('2d').drawImage(c, (w - tw) / 2, (h - th) / 2, tw, th, 0, 0, tw, th);
+    return o;
+  }
+  function sharpness(c) {               // the strongest 0.5 % of edges at 1000 px: the same measure checkPhoto() uses for '糊了'
+    var B = grey(c, 1000), hist = new Uint32Array(1024), n = 0;
+    for (var y = Math.floor(B.h * 0.2); y < Math.floor(B.h * 0.8); y++) for (var x = Math.floor(B.w * 0.2); x < Math.floor(B.w * 0.8); x++) {
+      var k = y * B.w + x; hist[Math.min(1023, Math.round(Math.abs(B.g[k - 1] + B.g[k + 1] + B.g[k - B.w] + B.g[k + B.w] - 4 * B.g[k])))]++; n++;
+    }
+    var top = 0, e = 1023; while (e > 0 && top + hist[e] <= 0.005 * n) { top += hist[e]; e--; }
+    return e;
+  }
+  function flash() {
+    var f = $('camFlash'); f.style.transition = 'none'; f.style.opacity = '0.85'; void f.offsetWidth;
+    f.style.transition = 'opacity .35s'; f.style.opacity = '0';
+    try { if (navigator.vibrate) navigator.vibrate(60); } catch (e) {}
+  }
+  function snap() {
+    var v = $('camVideo');
+    if (camSnapping || !v.videoWidth) return;
+    camSnapping = true; camArmed = false; camGreenSince = 0; camLastSnap = Date.now();
+    flash();
+    var vw = v.videoWidth, vh = v.videoHeight, frame = scaleTo(v, vw, vh);
+    var got = (camTrack && window.ImageCapture) ? takeHi(frame, vw, vh) : Promise.resolve(frame);
+    got.then(function (c) {
+      // 16-Oct, JR's first real script: shaken photos scored 63-71, readable ones 94+ (all 41 earlier real photos 122+). Retake, twice at most.
+      if (sharpness(c) < SHARP_MIN && camRetries < 2) { camRetries++; camArmed = true; camToast('糊了，没存 · 再拍'); return; }
+      camRetries = 0;
+      camPending++; camCount();
+      queue = queue.then(function () { return addCanvas(c); }).then(function () {
+        camPending--; camCount();
+        var last = pages[pages.length - 1];
+        if (last && last.warn) camToast('上一页' + last.warn + ' · 可删掉重拍');
+      }, function () { camPending--; camCount(); });
+    }).then(function () { camSnapping = false; camLastSnap = Date.now(); camNotGreenSince = 0; });
+  }
+  function setMode(m) { camMode = m; $('modeOne').classList.toggle('on', m === 'one'); $('modeTwo').classList.toggle('on', m === 'two'); }
+
+  $('liveBtn').onclick = openCamera;
+  $('camShot').onclick = snap;
+  $('camDone').onclick = closeCamera;
+  $('modeOne').onclick = function () { setMode('one'); };
+  $('modeTwo').onclick = function () { setMode('two'); };
+  $('autoBtn').onclick = function () {
+    camAuto = !camAuto; camGreenSince = 0;
+    $('autoBtn').classList.toggle('on', camAuto); $('autoBtn').textContent = camAuto ? '● 自动拍：开' : '○ 自动拍：关';
+  };
+
+  // Test hooks for the local check only (add a picture without the camera).
+  window.__jrScanAddCanvas = function (c) { return enqueue(function () { return addCanvas(c); }); };
+  window.__jrScanPaper = function (c) { return paperIn(c, 0, 0, c.width, c.height); };
+  window.__jrScanPages = function () { return pages.map(function (p) { return { w: p.w, h: p.h, quad: p.quad, cut: !!p.cut }; }); };
+
+  start();
+})();
+</script>
+</body>
+</html>
