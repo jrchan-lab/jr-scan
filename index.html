@@ -327,7 +327,7 @@
   // Big C fills in JR's Apps Script web-app address (https://script.google.com/macros/s/.../exec) before the page is published on GitHub Pages.
   // Inside Apps Script itself this stays unused (google.script.run is used instead).
   var EXEC_URL = 'https://script.google.com/macros/s/AKfycbyxbS6gZNiC37tzVZgdoM4eJLfdWZAKOU5rGPMp-D9XRwd8DTkhQL4Braa3lYnddZ3e1A/exec';   // filled in only in the published copy (apps/scanner/publish_jr_scan.py); the address never goes into this repo
-  var VERSION = '第十四版 b · 20-Nov-2026';
+  var VERSION = '第十四版 c · 20-Nov-2026';
   var onGoogle = typeof google !== 'undefined' && google.script && google.script.run;
   var hasServer = !!(onGoogle || EXEC_URL);     // false = nothing to save to: the PDF is only downloaded
   var $ = function (id) { return document.getElementById(id); };
@@ -677,6 +677,13 @@
     faceHD[k] = null;
     run('faceHd', [pinValue, p.paper_id, n]).then(function (u) { faceHD[k] = u || ''; if (then && u) then(u); }).catch(function () { faceHD[k] = ''; });
   }
+  // 20-Nov v14c (JR「我按过了，可是为什么还是没有出现」): a paper opens on the NEXT face after the last press, and that face used to say 「（还没按）」
+  // although the class HAD pressed. Now: the face itself says whether it was done, and 「还没按」 only when this class never pressed the paper.
+  function stageNote(p, n) {
+    var m = cc && (p.prog || {})[cc.id];
+    if (!m) return '（这一班还没按过这份卷）';
+    return n <= m.face ? '（' + dayShort(m.date) + ' 已经做完）' : '（上次 ' + dayShort(m.date) + ' 做到第 ' + m.face + ' 面）';
+  }
   function stageOf(p, faces) {
     var n = pe.face || pe.view, f = faces.filter(function (x) { return x.n === n; })[0] || faces[0], im = faceImgs[p.paper_id] || {};
     var st = el('div', 'stage'), img = el('img'); img.alt = '第 ' + f.n + ' 面'; img.id = 'stageImg';
@@ -684,7 +691,7 @@
     st.appendChild(img);
     hdOf(p, f.n, function (u) { var s = $('stageImg'); if (s && s.alt === '第 ' + f.n + ' 面') s.src = u; });
     [f.n - 1, f.n + 1].forEach(function (k) { if (k >= 1 && k <= faces.length) hdOf(p, k); });   // the next swipe is ready
-    var cap = el('div', 'cap'); cap.appendChild(el('b', '', '第 ' + f.n + ' 面')); cap.appendChild(document.createTextNode('  ' + (f.title || '') + (pe.face ? '' : '（还没按）')));
+    var cap = el('div', 'cap'); cap.appendChild(el('b', '', '第 ' + f.n + ' 面')); cap.appendChild(document.createTextNode('  ' + (f.title || '') + (pe.face ? '' : stageNote(p, f.n))));
     st.appendChild(cap);
     if (f.n > 1) st.appendChild(el('span', 'nav l', '‹'));
     if (f.n < faces.length) st.appendChild(el('span', 'nav r', '›'));
