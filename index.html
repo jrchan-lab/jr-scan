@@ -67,8 +67,21 @@
   .pBody { padding:0 14px 14px; }
   .q { font-size:18px; font-weight:700; margin:14px 0 8px; }
   .q small { color:var(--dust); font-weight:400; font-size:15px; }
-  .faces { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
-  .faces button { padding:0; height:58px; border-radius:8px; font-size:28px; font-family:"Noto Serif SC",Georgia,serif; font-weight:600; flex:none;
+  /* 19-Nov v14 (JR「照片停在那里，就在那个页数选择」): the face picture stays put; the numbers are right under it */
+  .stage { position:relative; width:100%; height:min(36vh, 340px); background:#fff; border-radius:10px; overflow:hidden; touch-action:pan-y; margin:6px 0 8px; user-select:none; }
+  .stage img { width:100%; height:100%; object-fit:contain; display:block; -webkit-user-drag:none; }
+  .stage .cap { position:absolute; left:0; right:0; bottom:0; padding:7px 10px; background:rgba(20,35,29,.88); color:var(--chalk); font-size:15px; line-height:1.35; }
+  .stage .cap b { color:var(--go); }
+  .stage .nav { position:absolute; top:42%; width:34px; height:52px; border-radius:10px; background:rgba(20,35,29,.55); color:#fff; font-size:26px; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+  .stage .nav.l { left:6px; } .stage .nav.r { right:6px; }
+  .stage .big { position:absolute; right:8px; top:8px; background:rgba(20,35,29,.8); color:var(--chalk); font-size:14px; padding:4px 9px; border-radius:12px; pointer-events:none; }
+  .willSave { margin:10px 0 0; padding:9px 12px; border-radius:10px; background:var(--slate2); color:var(--chalk); font-size:17px; }
+  .willSave b { color:var(--go); }
+  .reasons { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:8px; }
+  .reasons button { background:transparent; color:var(--chalk); border:1.5px solid var(--line); padding:12px 4px; font-size:18px; }
+  .reasons button.on { background:var(--go); color:var(--go-fg); border-color:var(--go); }
+  .faces { display:grid; grid-template-columns:repeat(6,1fr); gap:5px; }
+  .faces button { padding:0; height:50px; border-radius:8px; font-size:24px; font-family:"Noto Serif SC",Georgia,serif; font-weight:600; flex:none;
                   background:var(--board); color:var(--chalk); border:1.5px solid var(--line); }
   .faces button.past { color:#5f7368; text-decoration:line-through; text-decoration-thickness:2px; background:#17271f; }
   .faces button.on { background:var(--go); color:var(--go-fg); border-color:var(--go); text-decoration:none; }
@@ -87,7 +100,7 @@
   .ask { margin:12px 0; padding:14px; border-radius:12px; border:2px solid var(--go); background:#2e2a12; font-size:18px; font-weight:600; line-height:1.4; }
   .note { color:var(--dust); font-size:15px; margin:4px 0 0; }
   .sect { color:var(--go); font-size:17px; font-weight:700; margin:20px 0 0; }
-  .recBtns { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+  .recBtns { display:grid; grid-template-columns:repeat(2,1fr); gap:6px; }
   .recBtns button { background:transparent; color:var(--chalk); border:1.5px solid var(--line); padding:13px 4px; font-size:19px; }
   .recBtns button.on { background:var(--go); color:var(--go-fg); border-color:var(--go); }
   /* ---------- shoot: 1 photo › 2 paper › 3 upload ---------- */
@@ -314,7 +327,7 @@
   // Big C fills in JR's Apps Script web-app address (https://script.google.com/macros/s/.../exec) before the page is published on GitHub Pages.
   // Inside Apps Script itself this stays unused (google.script.run is used instead).
   var EXEC_URL = 'https://script.google.com/macros/s/AKfycbyxbS6gZNiC37tzVZgdoM4eJLfdWZAKOU5rGPMp-D9XRwd8DTkhQL4Braa3lYnddZ3e1A/exec';   // filled in only in the published copy (apps/scanner/publish_jr_scan.py); the address never goes into this repo
-  var VERSION = '第十三版（快）· 18-Nov-2026';
+  var VERSION = '第十四版 b · 20-Nov-2026';
   var onGoogle = typeof google !== 'undefined' && google.script && google.script.run;
   var hasServer = !!(onGoogle || EXEC_URL);     // false = nothing to save to: the PDF is only downloaded
   var $ = function (id) { return document.getElementById(id); };
@@ -463,6 +476,12 @@
     olds.sort(newest); others.sort(newest);
     return { day: day, olds: olds, others: others, recs: recs };
   }
+  var NT_LOCAL = {};             // 19-Nov v14: 「今天没有上到」 pressed on this phone: 'date|class_id' -> reason ('' = taken back)
+  function notTaught(c, date) {
+    var k = date + '|' + c.id; if (k in NT_LOCAL) return NT_LOCAL[k];
+    var hit = ((PD && PD.not_taught) || []).filter(function (x) { return x.date === date && x.class_id === c.id; }).pop();
+    return hit ? hit.reason || '没写原因' : '';
+  }
   function pressedOn(c, date) {
     if (PRESSED[date + '|' + c.id]) return true;
     return PROGP.some(function (p) { var r = (p.prog || {})[c.id]; return r && r.date === date; });
@@ -509,7 +528,8 @@
       var s = clsShort(c), did = pressedOn(c, homeDate);
       var r = btn('', 'ttRow', function () { openClass(c, homeDate); });
       var nm = el('span', 'nm', s.title); nm.appendChild(el('small', '', s.sess + (c.sure ? '' : ' · 时间表没核')));
-      r.appendChild(nm); r.appendChild(el('span', 'chip ' + (did ? 'did' : 'wait'), did ? '按了 ✔' : '还没按'));
+      var nt = notTaught(c, homeDate);
+      r.appendChild(nm); r.appendChild(el('span', 'chip ' + (did ? 'did' : nt ? 'dim' : 'wait'), did ? '按了 ✔' : nt ? '没上到' : '还没按'));
       box.appendChild(r);
     });
     show('ttEmpty', !d.classes.length);
@@ -590,7 +610,11 @@
     var it = pgPapers(c, date), own = it.day.filter(function (o) { return o.p.cls === c.grades.join(''); });
     if (own.length === 1) openPaper(own[0].i); else if (it.day.length === 1) openPaper(it.day[0].i);   // this class's one paper that day: open it straight away
     go('class'); }
-  function openPaper(i) { openPi = i; pe = { face: 0, whole: '还没完', ask: false }; loadFaceImgs(PROGP[i]); }
+  function openPaper(i) {
+    var p = PROGP[i], mine = (p.prog || {})[cc.id], maxF = (p.faces || []).length ? p.faces[p.faces.length - 1].n : 1;
+    openPi = i; pe = { face: 0, view: mine ? Math.min(mine.face + 1, maxF) : 1, ask: false }; loadFaceImgs(p);
+  }
+  var QUIZ_T = /^\s*(小测|Kuiz|KUIZ|Quiz|QUIZ)/;
   function photoAfter(p, kind, d) { return ((p.photos || {})[kind] || []).filter(function (x) { return x >= d; })[0] || ''; }
   function drawClass() {
     if (!cc) return;
@@ -602,6 +626,7 @@
     var it = pgPapers(cc, ccDate);
     if (it.day.length) { list.appendChild(el('div', 'sect', ccDate === PD.date ? '今天印的卷' : '那天印的卷')); it.day.forEach(function (o) { paperCard(list, o); }); }
     if (it.recs.length) { list.appendChild(el('div', 'sect', '回头考 / 复习')); it.recs.forEach(function (o) { recCard(list, o); }); }
+    notTaughtCard(list);                     // v14: under the day's papers, so the paper's picture + numbers come first on the screen
     if (it.olds.length) {
       list.appendChild(el('div', 'sect', '这一班还没做完的旧卷'));
       (moreOld ? it.olds : it.olds.slice(0, 2)).forEach(function (o) { paperCard(list, o); });
@@ -628,7 +653,10 @@
   function paperCard(list, o) {
     var p = o.p, pr = p.prog || {}, mine = pr[cc.id], open = openPi === o.i;
     var card = el('div', 'paper' + (open ? ' open' : ''));
-    var head = btn('', 'pHead', function () { if (openPi === o.i) { openPi = -1; pe = null; } else openPaper(o.i); drawClass(); });
+    var head = btn('', 'pHead', function () {
+      if (openPi === o.i) { openPi = -1; pe = null; drawClass(); return; }
+      openPaper(o.i); drawClass(); var c = document.querySelector('.paper.open'); if (c) c.scrollIntoView({ block: 'start' });
+    });
     head.appendChild(document.createTextNode(paperName(p) || labelOf(p)));
     var st = '这一班：' + (mine ? progLine(mine) : '还没按');
     Object.keys(pr).filter(function (k) { return k !== cc.id; }).forEach(function (k) { st += '\n' + clsName(k) + '：' + progLine(pr[k]) + '（各记各的）'; });
@@ -639,39 +667,116 @@
     if (open && pe) card.appendChild(paperBody(p, mine));
     list.appendChild(card);
   }
+  // 19-Nov v14 (JR「看照片要高清，刷换要一样，照片停在那里，就在那个页数选择」 + 「为什么可以按页数，又可以选择这份卷还没有完还是全部做完了」):
+  // the picture of the face stays in one place (fixed height, never jumps); a number or a swipe chooses the face, and the picture shown IS the face
+  // chosen. The page decides 「全部做完」 itself: last face + the quiz photo is in = 全部做完; last face, no photo = asks 「小测做了吗」 once.
+  var faceHD = {};                   // 'paper_id|n' -> data URL ('' = not made, null = on its way)
+  function hdOf(p, n, then) {
+    var k = p.paper_id + '|' + n;
+    if (faceHD[k] !== undefined || !hasServer) { if (then && faceHD[k]) then(faceHD[k]); return; }
+    faceHD[k] = null;
+    run('faceHd', [pinValue, p.paper_id, n]).then(function (u) { faceHD[k] = u || ''; if (then && u) then(u); }).catch(function () { faceHD[k] = ''; });
+  }
+  function stageOf(p, faces) {
+    var n = pe.face || pe.view, f = faces.filter(function (x) { return x.n === n; })[0] || faces[0], im = faceImgs[p.paper_id] || {};
+    var st = el('div', 'stage'), img = el('img'); img.alt = '第 ' + f.n + ' 面'; img.id = 'stageImg';
+    var hd = faceHD[p.paper_id + '|' + f.n]; if (hd) img.src = hd; else if (im[f.n]) img.src = im[f.n];
+    st.appendChild(img);
+    hdOf(p, f.n, function (u) { var s = $('stageImg'); if (s && s.alt === '第 ' + f.n + ' 面') s.src = u; });
+    [f.n - 1, f.n + 1].forEach(function (k) { if (k >= 1 && k <= faces.length) hdOf(p, k); });   // the next swipe is ready
+    var cap = el('div', 'cap'); cap.appendChild(el('b', '', '第 ' + f.n + ' 面')); cap.appendChild(document.createTextNode('  ' + (f.title || '') + (pe.face ? '' : '（还没按）')));
+    st.appendChild(cap);
+    if (f.n > 1) st.appendChild(el('span', 'nav l', '‹'));
+    if (f.n < faces.length) st.appendChild(el('span', 'nav r', '›'));
+    st.appendChild(el('span', 'big', '点一下看大'));
+    var x0 = null, y0 = 0, t0 = 0;
+    st.addEventListener('pointerdown', function (e) { x0 = e.clientX; y0 = e.clientY; t0 = Date.now(); });
+    st.addEventListener('pointerup', function (e) {
+      if (x0 == null) return; var dx = e.clientX - x0, dy = e.clientY - y0; x0 = null;
+      if (Math.abs(dx) > 50 && Math.abs(dy) < 80) { var k = f.n + (dx < 0 ? 1 : -1); if (k >= 1 && k <= faces.length) { pe.face = k; pe.view = k; pe.ask = false; drawClass(); } return; }
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && Date.now() - t0 < 400) openFaceViewer(p, f.n);
+    });
+    return st;
+  }
   function paperBody(p, mine) {
     var body = el('div', 'pBody'), faces = p.faces || [], maxF = faces.length ? faces[faces.length - 1].n : 0;
-    var q = el('div', 'q', '做完到第几面？'); q.appendChild(el('small', '', '  按最后做完的那一面')); body.appendChild(q);
+    if (faces.length) body.appendChild(stageOf(p, faces));
+    var q = el('div', 'q', '做完到第几面？'); q.appendChild(el('small', '', '  按最后做完的那一面' + (mine ? '；划掉的 = 上次做完的' : ''))); body.appendChild(q);
     var grid = el('div', 'faces');
     faces.forEach(function (fc) {
-      grid.appendChild(btn(String(fc.n), (mine && fc.n <= mine.face ? 'past' : '') + (pe.face === fc.n ? ' on' : ''), function () { pe.face = fc.n; pe.ask = false; drawClass(); }));
+      grid.appendChild(btn(String(fc.n), (mine && fc.n <= mine.face ? 'past' : '') + (pe.face === fc.n ? ' on' : ''), function () { pe.face = fc.n; pe.view = fc.n; pe.ask = false; drawClass(); }));
     });
     body.appendChild(grid);
-    var info = el('div', 'faceInfo'), f = faces.filter(function (x) { return x.n === pe.face; })[0], im = faceImgs[p.paper_id] || {};
-    if (f) {
-      if (im[f.n]) { var i = el('img'); i.src = im[f.n]; i.alt = ''; i.onclick = function () { openFaceViewer(p, f.n); }; info.appendChild(i); }
-      else if (faceImgs[p.paper_id] === null) info.appendChild(el('i', 'thumbWait'));   // v13.1: keep the place, so the page does not jump when the picture arrives
-      info.appendChild(el('span', '', '第 ' + f.n + ' 面：' + f.title + (im[f.n] ? '（点小图看大）' : '')));
-    } else info.appendChild(el('span', '', mine ? '划掉的 = 上次已经做完的面。' : ''));
-    body.appendChild(info);
-    body.appendChild(el('div', 'q', '这份卷'));
-    var seg = el('div', 'seg');
-    ['还没完', '全部做完'].forEach(function (w) { seg.appendChild(btn(w, pe.whole === w ? 'on' : '', function () { pe.whole = w; pe.ask = false; if (w === '全部做完' && !pe.face) pe.face = maxF; drawClass(); })); });
-    body.appendChild(seg);
-    if (!pe.face) { body.appendChild(el('p', 'note', '先按做完到第几面，再按存起来。')); return body; }
+    if (!pe.face) { body.appendChild(el('p', 'note', '按一个数字，或在图上左右刷，再按存起来。')); return body; }
+    var will = function (text) { var w = el('div', 'willSave'); w.appendChild(document.createTextNode('这样会记：')); w.appendChild(el('b', '', text)); body.appendChild(w); };
+    var ph = photoAfter(p, '小测', ccDate), last = pe.face === maxF, row = el('div', 'saveRow');
     if (pe.ask) {
       var a = el('div', 'ask', '电脑已经收到 ' + dayShort(pe.ask) + ' 这份卷的小测照片。小测真的没做？');
       var r = el('div', 'saveRow');
-      r.appendChild(btn('改成：小测做了 · 存', '', function () { faceSave(p, '做了'); }));
-      r.appendChild(btn('没错，没做 · 存', 'ghost', function () { faceSave(p, '没做', true); }));
+      r.appendChild(btn('改成：小测做了 · 存', '', function () { faceSave(p, last ? '全部做完' : '做了'); }));
+      r.appendChild(btn('对，小测没做 · 存', 'ghost', function () { faceSave(p, '没做', true); }));
       a.appendChild(r); body.appendChild(a); return body;
     }
-    body.appendChild(el('div', 'q', pe.whole === '全部做完' ? '整份做完（小测也做了）' : '小测呢？'));
-    var row = el('div', 'saveRow');
-    if (pe.whole === '全部做完') row.appendChild(btn('✔ 整份做完 · 存起来', 'one', function () { faceSave(p, '全部做完'); }));
-    else { row.appendChild(btn('小测做了 · 存起来', '', function () { faceSave(p, '做了'); })); row.appendChild(btn('小测没做 · 存起来', '', function () { faceSave(p, '没做'); })); }
+    // 20-Nov v14b (JR「如果我选择到那一面，为什么还是需要按小测还没有做还是做了？这个不是重叠了吗？」): the face already says it.
+    // The quiz faces are the faces whose title starts 小测 / Kuiz / Quiz. Before the first one = 小测没做; at or after the last one = 小测做了
+    // (the last face of the paper = 整份做完); inside the quiz = still doing it = 没做. One button. A paper with no quiz face asks as before.
+    var qf = faces.filter(function (x) { return QUIZ_T.test(x.title || ''); }).map(function (x) { return x.n; });
+    if (qf.length) {
+      var q0 = qf[0], q1 = qf[qf.length - 1], quiz, txt;
+      if (pe.face < q0) { quiz = '没做'; txt = '做完到第 ' + pe.face + ' 面 · 小测还没做（小测在第 ' + q0 + (q1 > q0 ? '–' + q1 : '') + ' 面）'; }
+      else if (pe.face < q1) { quiz = '没做'; txt = '做完到第 ' + pe.face + ' 面 · 小测做到一半（还没做完）'; }
+      else if (last) { quiz = '全部做完'; txt = '整份做完（小测做了）' + (ph ? ' · 📷 ' + dayShort(ph) + ' 小测照片收到了' : ''); }
+      else { quiz = '做了'; txt = '做完到第 ' + pe.face + ' 面 · 小测做了'; }
+      will(txt);
+      row.appendChild(btn('✔ 存起来', 'one', function () { faceSave(p, quiz, false, '面'); }));
+    } else if (last && ph) {                       // the quiz photo is in: the computer fills in 全部做完
+      will('整份做完（📷 ' + dayShort(ph) + ' 小测照片收到了）');
+      row.appendChild(btn('✔ 存起来', 'one', function () { faceSave(p, '全部做完', false, '照片'); }));
+    } else if (last) {
+      body.appendChild(el('div', 'q', '最后一面了。小测做了吗？'));
+      row.appendChild(btn('小测做了 · 存', '', function () { faceSave(p, '全部做完'); }));
+      row.appendChild(btn('小测还没做 · 存', '', function () { faceSave(p, '没做'); }));
+      body.appendChild(row);
+      will('小测做了 = 整份做完；还没做 = 做完到第 ' + pe.face + ' 面，小测没做'); return body;
+    } else {
+      will('做完到第 ' + pe.face + ' 面');
+      body.appendChild(el('div', 'q', '小测呢？'));
+      row.appendChild(btn('小测做了 · 存起来', '', function () { faceSave(p, '做了'); }));
+      row.appendChild(btn('小测没做 · 存起来', '', function () { faceSave(p, '没做'); }));
+    }
     body.appendChild(row);
     return body;
+  }
+  // 19-Nov v14 (JR「需要一个选择就是没有上到，原因还是什么」): the class met but the lesson was not reached, with the reason (a must).
+  var NT_REASONS = ['没时间', '学生没来', '先做旧卷', '自己写'], ntOpen = false, ntSel = '';
+  function notTaughtCard(list) {
+    var had = notTaught(cc, ccDate);
+    if (had && !ntOpen) { list.appendChild(el('div', 'ok', '已记：这一天没有上到（' + had + '）。上了的话，照常按下面的卷就好。')); return; }
+    if (!ntOpen) { var b = btn('这一班今天没有上到？按原因', 'ghost', function () { ntOpen = true; ntSel = ''; drawClass(); }); b.style.width = '100%'; b.style.marginTop = '8px'; list.appendChild(b); return; }
+    var card = el('div', 'card');
+    card.appendChild(el('h3', '', '没有上到，为什么？'));
+    var g = el('div', 'reasons');
+    NT_REASONS.forEach(function (r) { g.appendChild(btn(r, ntSel === r ? 'on' : '', function () { ntSel = r; drawClass(); if (r === '自己写') setTimeout(function () { var i = $('ntText'); if (i) i.focus(); }, 30); })); });
+    card.appendChild(g);
+    if (ntSel === '自己写') { var inp = el('input'); inp.type = 'text'; inp.id = 'ntText'; inp.maxLength = 100; inp.placeholder = '打原因，例如 考试复习'; inp.style.marginTop = '8px'; card.appendChild(inp); }
+    if (ntSel) { var w = el('div', 'willSave'); w.appendChild(document.createTextNode('这样会记：')); w.appendChild(el('b', '', dayShort(ccDate) + ' 这一班没有上到（' + (ntSel === '自己写' ? '你打的原因' : ntSel) + '）')); card.appendChild(w); }
+    var row = el('div', 'saveRow');
+    row.appendChild(btn('不用了', 'ghost', function () { ntOpen = false; drawClass(); }));
+    var sv = btn(ntSel ? '存起来' : '先按原因', '', function () { ntSave(); }); sv.disabled = !ntSel; row.appendChild(sv);
+    card.appendChild(row); list.appendChild(card);
+  }
+  function ntSave() {
+    if (saving || !ntSel) return;
+    var reason = ntSel === '自己写' ? (($('ntText') || {}).value || '').trim() : ntSel;
+    if (!reason) { say('先打原因。', 'bad'); return; }
+    var rec = baseRec(); rec.grade = rec.grades[0]; rec.kind = '没上到'; rec.reason = reason; rec.req = newReq();
+    var k = ccDate + '|' + cc.id, had = k in NT_LOCAL, old = NT_LOCAL[k];
+    saving = true; say('存的时候稍等……');
+    run('saveProgress', [pinValue, rec]).then(function (r) {
+      NT_LOCAL[k] = reason; ntOpen = false;
+      saved_(rec, r, dayShort(ccDate) + ' 没有上到（' + reason + '）', function () { if (had) NT_LOCAL[k] = old; else NT_LOCAL[k] = ''; });
+      if (!PROGP.some(function (q) { var x = (q.prog || {})[cc.id]; return x && x.date === ccDate; })) delete PRESSED[k];   // the home page says 没上到, not 按了
+    }).catch(failed_);
   }
   function baseRec() { return { date: ccDate, class_id: cc.id, class_name: cc.name, grades: cc.grades.slice(), subject: cc.subject }; }
   var saving = false;
@@ -684,13 +789,14 @@
     say(''); drawClass(); window.scrollTo(0, 0);
   }
   function failed_(e) { saving = false; say('没存到：' + e.message + '（再按一次）', 'bad'); drawClass(); }
-  function faceSave(p, quiz, sure) {
+  function faceSave(p, quiz, sure, src) {
     if (saving) return;
     var ph = photoAfter(p, '小测', ccDate);
     if (quiz === '没做' && ph && !sure) { pe.ask = ph; drawClass(); return; }      // v13 照片对按: a quiz photo arrived, yet 「没做」 -> ask once
     var f = (p.faces || []).filter(function (x) { return x.n === pe.face; })[0]; if (!f) return;
     var rec = baseRec(); rec.grades = shared(p, cc); rec.grade = rec.grades[0];
     rec.paper_id = p.paper_id; rec.face = f.n; rec.face_title = f.title; rec.quiz = quiz; rec.paper_sha = p.sha || ''; rec.req = newReq();
+    if (src) rec.quiz_src = src;
     var text = (paperName(p) || p.paper_id) + ' · 做完到第 ' + f.n + ' 面 · ' + (quiz === '全部做完' ? '整份做完' : quiz === '做了' ? '小测做了' : '小测没做');
     saving = true; say('存的时候稍等……');
     var cid = cc.id, before = PROGP.map(function (q) { return q.paper_id === p.paper_id ? [q, (q.prog || {})[cid]] : null; }).filter(Boolean);
@@ -707,7 +813,8 @@
     if (ph.length) head.appendChild(el('span', 'ph', '📷 ' + dayShort(ph[0]) + ' 照片收到了 → 电脑当「做完」' + (p.rec_st ? '' : '（不对才按下面）')));
     card.appendChild(head);
     var body = el('div', 'pBody'), bs = el('div', 'recBtns');
-    ['做完', '一半', '没做'].forEach(function (st) { bs.appendChild(btn(st, sel === st ? 'on' : '', function () { recSel[p.paper_id] = st; drawClass(); })); });
+    ['做完', '没做'].forEach(function (st) {        // 19-Nov v14: two buttons (一半 is still accepted by Code.gs for older pages)
+      bs.appendChild(btn(st, sel === st ? 'on' : '', function () { recSel[p.paper_id] = st; drawClass(); })); });
     body.appendChild(bs);
     if (sel) { var r = el('div', 'saveRow'); r.appendChild(btn('回头考「' + sel + '」· 存起来', 'one', function () { recSave(o, sel); })); body.appendChild(r); }   // v13: pressed = chosen; 存 asks it once
     card.appendChild(body); list.appendChild(card);
@@ -749,9 +856,15 @@
       .sort(function (a, b) { return (b.date || '') < (a.date || '') ? -1 : (b.date || '') > (a.date || '') ? 1 : 0; }).slice(0, 12);
     list.reduce(function (pr, p) { return pr.then(function () { return loadFaceImgs(p); }); }, Promise.resolve());
   }
-  function openFaceViewer(p, n) {
-    var im = faceImgs[p.paper_id] || {}, list = (p.faces || []).filter(function (f) { return im[f.n]; });
-    openViewer(list.map(function (f) { return { src: im[f.n], title: '第 ' + f.n + ' 面' }; }), Math.max(0, list.map(function (f) { return f.n; }).indexOf(n)), false);
+  function openFaceViewer(p, n) {      // v14: the big picture (faceHd), the small one until it arrives; swiping works the same as on the photos
+    var im = faceImgs[p.paper_id] || {}, list = p.faces || [];
+    openViewer(list.map(function (f) { return { title: '第 ' + f.n + ' 面', thumb: im[f.n], src: function () {
+      var k = p.paper_id + '|' + f.n;
+      if (faceHD[k]) return faceHD[k];
+      return new Promise(function (ok) { hdOf(p, f.n, ok); setTimeout(function () { ok(faceHD[k] || im[f.n] || ''); }, faceHD[k] === '' ? 0 : 9000); });
+    } }; }), Math.max(0, list.map(function (f) { return f.n; }).indexOf(n)), false, function (i) {
+      if (pe && list[i]) { pe.face = list[i].n; pe.view = list[i].n; pe.ask = false; drawClass(); }   // the face looked at = the face chosen
+    });
   }
 
   // ===== SHOOT: ① 拍照 › ② 哪份卷 › ③ 上传 (one step per screen) =====
@@ -873,19 +986,26 @@
 
   // ===== full-screen photo: pinch, double tap, swipe (v13 测试报告 最痛 1) =====
   var VW = { items: [], i: 0, tools: false, base: 1, s: 1, tx: 0, ty: 0, pts: {}, pinch: null, st: null, lastTap: 0 };
-  function openViewer(items, i, tools) {
+  function openViewer(items, i, tools, onClose) {
     if (!items.length) return;
-    VW.items = items; VW.tools = tools; show('vw', true); show('vwBot', tools); document.body.style.overflow = 'hidden'; vwShow(i);
+    VW.items = items; VW.tools = tools; VW.onClose = onClose || null; show('vw', true); show('vwBot', tools); document.body.style.overflow = 'hidden'; vwShow(i);
   }
   function vwShow(i) {
     VW.i = Math.max(0, Math.min(VW.items.length - 1, i));
     var it = VW.items[VW.i], t = $('vwTitle'); t.textContent = (it.title || '') + '  ' + (VW.i + 1) + ' / ' + VW.items.length;
     if (it.warn) { var w = el('i', '', '  ⚠ ' + it.warn); t.appendChild(w); }
     $('vwLeft').disabled = VW.i === 0;
-    var img = $('vwImg'); img.style.visibility = 'hidden';
+    var img = $('vwImg'), shown = false; img.style.visibility = 'hidden';
+    if (it.thumb) { img.onload = function () { vwFit(); img.style.visibility = ''; shown = true; }; img.src = it.thumb; }   // v14: the small picture at once, the big one swaps in
     Promise.resolve(typeof it.src === 'function' ? it.src() : it.src).then(function (url) {
-      if (VW.items[VW.i] !== it) return;
-      img.onload = function () { vwFit(); img.style.visibility = ''; }; img.src = url;
+      if (VW.items[VW.i] !== it || !url || url === img.src) return;
+      var w0 = img.naturalWidth;
+      img.onload = function () {
+        if (shown && VW.s > 1.01 && w0) { VW.base = VW.base * w0 / img.naturalWidth; vwApply(); }   // already zoomed: same size on screen, just sharper
+        else vwFit();
+        img.style.visibility = ''; shown = true;
+      };
+      img.src = url;
     });
   }
   function vwFit() {
@@ -895,7 +1015,7 @@
   }
   function vwApply() { $('vwImg').style.transform = 'translate(' + VW.tx + 'px,' + VW.ty + 'px) scale(' + (VW.base * VW.s) + ')'; }
   function vwZoomAt(cx, cy, s) { s = Math.max(1, Math.min(6, s)); var k = s / VW.s; VW.tx = cx - (cx - VW.tx) * k; VW.ty = cy - (cy - VW.ty) * k; VW.s = s; if (s === 1) vwFit(); else vwApply(); }
-  function vwClose() { show('vw', false); document.body.style.overflow = ''; VW.items = []; }
+  function vwClose() { var cb = VW.onClose, i = VW.i; VW.onClose = null; show('vw', false); document.body.style.overflow = ''; VW.items = []; if (cb) cb(i); }
   var vw = $('vw');
   function inBars(e) { return e.target.closest && e.target.closest('#vwTop,#vwBot'); }
   vw.addEventListener('pointerdown', function (e) {
