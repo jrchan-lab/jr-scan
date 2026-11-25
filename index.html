@@ -327,7 +327,7 @@
   // Big C fills in JR's Apps Script web-app address (https://script.google.com/macros/s/.../exec) before the page is published on GitHub Pages.
   // Inside Apps Script itself this stays unused (google.script.run is used instead).
   var EXEC_URL = 'https://script.google.com/macros/s/AKfycbyxbS6gZNiC37tzVZgdoM4eJLfdWZAKOU5rGPMp-D9XRwd8DTkhQL4Braa3lYnddZ3e1A/exec';   // filled in only in the published copy (apps/scanner/publish_jr_scan.py); the address never goes into this repo
-  var VERSION = '第十四版 d · 20-Nov-2026';
+  var VERSION = '第十四版 f · 25-Nov-2026';
   var onGoogle = typeof google !== 'undefined' && google.script && google.script.run;
   var hasServer = !!(onGoogle || EXEC_URL);     // false = nothing to save to: the PDF is only downloaded
   var $ = function (id) { return document.getElementById(id); };
@@ -443,6 +443,7 @@
     PD = any ? data : null;
     TODAY = PD && (PD.papers || []).length ? PD : null;
     PROGP = PD ? (PD.papers || []).concat(PD.old_papers || []) : [];
+    mineApply();                                // 25-Nov: this phone's own saves of today, laid over the laptop's list
     if (PD && !PD.days) PD.days = [{ date: PD.date, wd: '', classes: (PD.classes_today || []).map(function (c) {   // a laptop list from before v12
       var id = c.grades.join('') + '-' + c.subject + '-?'; return { id: id, name: c.grades.map(gradeName).join('') + ' · ' + c.subject, grades: c.grades, subject: c.subject, sure: c.sure }; }) }];
   }
@@ -464,7 +465,7 @@
     PROGP.forEach(function (p, i) {
       if (!gradesOf(p).some(function (g) { return c.grades.indexOf(g) >= 0; }) || p.date > d) return;
       if (/^JX-/.test(p.paper_id) && !/集训/.test(c.subject + (c.name || ''))) return;   // 20-Nov v14d (JR「2年级没有晚上班的，解决」): 两兄弟集训的卷不是正常班的卷
-      if (p.kind === '回头考') { if (p.date === d && !seen['r' + p.paper_id]) { seen['r' + p.paper_id] = 1; recs.push({ i: i, p: p }); } return; }
+      if (p.kind === '回头考') { if (p.date === d && !seen['r' + p.paper_id] && recMine(p, c, d)) { seen['r' + p.paper_id] = 1; recs.push({ i: i, p: p }); } return; }
       if (!p.faces || !p.faces.length || seen[p.paper_id]) return;
       seen[p.paper_id] = 1;
       var o = { i: i, p: p }, s = subjectOf(p), mine = (p.prog || {})[c.id];
@@ -477,11 +478,46 @@
     olds.sort(newest); others.sort(newest);
     return { day: day, olds: olds, others: others, recs: recs };
   }
+  // 25-Nov (JR「六年级晚上班为什么看得到回头考的？而且是 4点的」): a 回头考 printed for one session (file 「5b-4点-…」, 「7b-晚上-…」, id …-WAN)
+  // belongs to that class only. It still shows everywhere in its grade when its session is unknown, or when no class of the grade has that session
+  // that day (never hidden from every class).
+  function sessBucket(s) { s = String(s || ''); var m = /^(\d+)点/.exec(s); return /^晚上/.test(s) ? '晚上' : /^下午/.test(s) ? '下午' : /^(上午|早上)/.test(s) ? '上午' : m ? m[1] + '点' : ''; }
+  function recSess(p) { var m = /^[0-9]+[a-z]?-([^-]+)-/.exec(p.file || ''), b = m ? sessBucket(m[1]) : ''; return b || (/-WAN$/.test(p.paper_id || '') ? '晚上' : ''); }
+  function clsSess(c) { return sessBucket(c.session || clsShort(c).sess.replace(/班$/, '')); }
+  function recMine(p, c, d) {
+    var rb = recSess(p); if (!rb || clsSess(c) === rb) return true;
+    return !dayObj(d).classes.some(function (x) { return clsSess(x) === rb && gradesOf(p).some(function (g) { return x.grades.indexOf(g) >= 0; }); });
+  }
   var NT_LOCAL = {};             // 19-Nov v14: 「今天没有上到」 pressed on this phone: 'date|class_id' -> reason ('' = taken back)
   function notTaught(c, date) {
     var k = date + '|' + c.id; if (k in NT_LOCAL) return NT_LOCAL[k];
     var hit = ((PD && PD.not_taught) || []).filter(function (x) { return x.date === date && x.class_id === c.id; }).pop();
     return hit ? hit.reason || '没写原因' : '';
+  }
+  // 25-Nov (JR「妈妈按了，为什么呈现出还没有按？一刷新就出没有按？」): PRESSED lived only in memory and the list on the phone is the laptop's
+  // _今天的卷.json, rewritten every few minutes (or late, when a photo is slow). Now each save is also kept on this phone (localStorage
+  // jrScanMine, today only) and laid over every list it loads, until the laptop's list is 10 minutes newer than the press. Undo removes it.
+  var MINE_KEY = 'jrScanMine';
+  function nowLocal() { var d = new Date(), p = function (x) { return ('0' + x).slice(-2); }; return todayIso() + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); }
+  function mineLoad() { try { var j = JSON.parse(localStorage.getItem(MINE_KEY) || 'null'); return j && j.day === todayIso() ? (j.list || []) : []; } catch (e) { return []; } }
+  function mineKeep(list) { try { localStorage.setItem(MINE_KEY, JSON.stringify({ day: todayIso(), list: list })); } catch (e) {} }
+  function mineAdd(rec) { var l = mineLoad(); l.push({ t: nowLocal(), rec: rec }); mineKeep(l); }
+  function mineDrop(req) { mineKeep(mineLoad().filter(function (x) { return x.rec.req !== req; })); }
+  function mineApply() {
+    if (!PD) return;
+    var at = Date.parse(PD.at || '');
+    mineLoad().forEach(function (x) {
+      var r = x.rec || {}, t = Date.parse(x.t), k = r.date + '|' + r.class_id;
+      if (!isNaN(at) && !isNaN(t) && t < at - 10 * 60000) return;       // the laptop's list is 10 minutes newer: it already holds this press
+      if (r.kind === '没上到') { NT_LOCAL[k] = r.reason || ''; return; }
+      if (r.kind === '回头考') PROGP.forEach(function (p) { if (p.paper_id === r.paper_id) { p.rec_st = r.status; p.done = r.status === '做完'; } });
+      else if (r.paper_id && r.face) PROGP.forEach(function (p) {
+        if (p.paper_id !== r.paper_id) return; p.prog = p.prog || {}; var old = p.prog[r.class_id];
+        if (!old || old.date <= r.date) p.prog[r.class_id] = { face: r.face, quiz: r.quiz, date: r.date };
+      });
+      else return;
+      PRESSED[k] = 1;
+    });
   }
   function pressedOn(c, date) {
     if (PRESSED[date + '|' + c.id]) return true;
@@ -792,6 +828,7 @@
     saving = false;
     var bad = !(r && typeof r === 'object' && r.date === rec.date);   // a v11 Code.gs answers true and drops date + class: say so in red
     PRESSED[ccDate + '|' + cc.id] = 1;
+    if (!bad) mineAdd(rec);                      // 25-Nov: survives a refresh of this page
     lastSaved = { key: cc.id + '|' + ccDate, req: rec.req, t: Date.now(), text: text, bad: bad, restore: restore };
     clsNote = null; openPi = -1; pe = null; recSel = {};
     say(''); drawClass(); window.scrollTo(0, 0);
@@ -841,7 +878,7 @@
     var L = lastSaved; if (!L || Date.now() - L.t > UNDO_MS || saving) return;
     saving = true; say('取消中……');
     run('undoProgress', [pinValue, L.req]).then(function () {
-      saving = false; if (L.restore) L.restore(); lastSaved = null;
+      saving = false; if (L.restore) L.restore(); lastSaved = null; mineDrop(L.req);
       var s = cc ? clsShort(cc) : null;
       clsNote = '↩ 取消了：' + L.text + '。现在可以重新按。';
       if (cc && !PROGP.some(function (p) { var r = (p.prog || {})[cc.id]; return r && r.date === ccDate; })) delete PRESSED[ccDate + '|' + cc.id];
