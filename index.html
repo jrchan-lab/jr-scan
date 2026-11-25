@@ -327,7 +327,7 @@
   // Big C fills in JR's Apps Script web-app address (https://script.google.com/macros/s/.../exec) before the page is published on GitHub Pages.
   // Inside Apps Script itself this stays unused (google.script.run is used instead).
   var EXEC_URL = 'https://script.google.com/macros/s/AKfycbyxbS6gZNiC37tzVZgdoM4eJLfdWZAKOU5rGPMp-D9XRwd8DTkhQL4Braa3lYnddZ3e1A/exec';   // filled in only in the published copy (apps/scanner/publish_jr_scan.py); the address never goes into this repo
-  var VERSION = '第十四版 f · 25-Nov-2026';
+  var VERSION = '第十四版 g · 25-Nov-2026';
   var onGoogle = typeof google !== 'undefined' && google.script && google.script.run;
   var hasServer = !!(onGoogle || EXEC_URL);     // false = nothing to save to: the PDF is only downloaded
   var $ = function (id) { return document.getElementById(id); };
@@ -543,7 +543,7 @@
   }
   $('dockBtn').onclick = function () {
     if (view === 'home') { shootCls = null; shootDate = homeDate; openShoot(); }
-    else if (view === 'class') { shootCls = cc; shootDate = ccDate; openShoot(); }
+    else if (view === 'class') guardPicks(function () { shootCls = cc; shootDate = ccDate; openShoot(); });
     else if (sStep === 1 && pages.length) { sStep = 2; drawShoot(); window.scrollTo(0, 0); }
     else if (sStep === 2 && pickReady()) { sStep = 3; drawShoot(); window.scrollTo(0, 0); }
   };
@@ -676,8 +676,28 @@
     if (!it.day.length && !it.recs.length && !it.olds.length) list.appendChild(el('p', 'sub', '这一班那天没有卷。按下面「拍这一班的卷」，或回课表按「✍ 别的」打一行字。'));
     list.appendChild(el('p', 'note', '这里只记「' + s.title + s.sess + '」。同一份卷别的班也用，进那一班自己按；两班各记各的，不会互相盖掉。'));
   }
+  // 25-Nov (JR「4年级今天都有做，为什么没有？」): RC-S4 回头考 and the 作文 paper were pressed on the phone but never reached Drive. A pick
+  // (回头考 做完/没做, a face number) is only a choice until its own 「存起来」; saving another card, opening another paper or leaving the class
+  // used to drop it without a word. Now unsaved picks are listed at the top, and opening another paper / leaving asks first.
+  function pendingPicks(faceOnly) {
+    var out = [];
+    if (!faceOnly) Object.keys(recSel).forEach(function (id) { if (recSel[id]) { var q = PROGP.filter(function (x) { return x.paper_id === id; })[0]; out.push('回头考 ' + (q ? dayShort(q.date) + ' ' : '') + '「' + recSel[id] + '」'); } });
+    if (pe && pe.face && openPi >= 0 && PROGP[openPi]) out.push((paperName(PROGP[openPi]) || PROGP[openPi].paper_id) + ' 第 ' + pe.face + ' 面');
+    return out;
+  }
+  function guardPicks(goOn, faceOnly) {
+    var l = pendingPicks(faceOnly); if (!l.length) { goOn(); return; }
+    sheet('还没存：' + l.join('、'), '刚才按的还没有存起来，走开就不算。', [{ label: '回去按「存起来」', val: 0 }, { label: '不要了，走开', val: 1, cls: 'ghost' }]).then(function (v) {
+      if (v !== 1) return;
+      if (!faceOnly) recSel = {};
+      if (pe) pe.face = 0;
+      goOn();
+    });
+  }
   function drawDoneBox() {
     var box = $('clsDone'); box.innerHTML = '';
+    var pend = pendingPicks();
+    if (pend.length) box.appendChild(el('div', 'ask', '⚠ 还没存：' + pend.join('、') + ' —— 在下面按「存起来」才算'));
     var L = lastSaved && lastSaved.key === cc.id + '|' + ccDate ? lastSaved : null;
     if (L) {
       var b = el('div', 'ok' + (L.bad ? ' badBox' : ''), (L.bad ? '⚠ 存到了，可是存档程序还是旧的：日期和班没记到。跟大C讲一声。\n' : '✔ 记好了：') + L.text);
@@ -691,8 +711,10 @@
     var p = o.p, pr = p.prog || {}, mine = pr[cc.id], open = openPi === o.i;
     var card = el('div', 'paper' + (open ? ' open' : ''));
     var head = btn('', 'pHead', function () {
-      if (openPi === o.i) { openPi = -1; pe = null; drawClass(); return; }
-      openPaper(o.i); drawClass(); var c = document.querySelector('.paper.open'); if (c) c.scrollIntoView({ block: 'start' });
+      guardPicks(function () {                // 25-Nov: a face picked on the open paper is not dropped silently
+        if (openPi === o.i) { openPi = -1; pe = null; drawClass(); return; }
+        openPaper(o.i); drawClass(); var c = document.querySelector('.paper.open'); if (c) c.scrollIntoView({ block: 'start' });
+      }, true);
     });
     head.appendChild(document.createTextNode(paperName(p) || labelOf(p)));
     var st = '这一班：' + (mine ? progLine(mine) : '还没按');
@@ -830,7 +852,10 @@
     PRESSED[ccDate + '|' + cc.id] = 1;
     if (!bad) mineAdd(rec);                      // 25-Nov: survives a refresh of this page
     lastSaved = { key: cc.id + '|' + ccDate, req: rec.req, t: Date.now(), text: text, bad: bad, restore: restore };
-    clsNote = null; openPi = -1; pe = null; recSel = {};
+    clsNote = null;
+    if (rec.kind === '回头考') delete recSel[rec.paper_id];          // 25-Nov: a save clears ONLY its own pick (it used to wipe every unsaved pick on the page)
+    else if (rec.kind === '没上到') { openPi = -1; pe = null; recSel = {}; }
+    else { openPi = -1; pe = null; }
     say(''); drawClass(); window.scrollTo(0, 0);
   }
   function failed_(e) { saving = false; say('没存到：' + e.message + '（再按一次）', 'bad'); drawClass(); }
@@ -885,7 +910,7 @@
       say(''); drawClass();
     }).catch(function (e) { saving = false; say('取消不到：' + e.message, 'bad'); });
   }
-  $('clsBack').onclick = function () { homeDate = ccDate; go('home'); };
+  $('clsBack').onclick = function () { guardPicks(function () { homeDate = ccDate; go('home'); }); };
   function loadFaceImgs(p) {
     if (!p || faceImgs[p.paper_id] !== undefined || !hasServer) return Promise.resolve();
     faceImgs[p.paper_id] = null;
