@@ -75,6 +75,14 @@
   .stage .nav { position:absolute; top:42%; width:34px; height:52px; border-radius:10px; background:rgba(20,35,29,.55); color:#fff; font-size:26px; display:flex; align-items:center; justify-content:center; pointer-events:none; }
   .stage .nav.l { left:6px; } .stage .nav.r { right:6px; }
   .stage .big { position:absolute; right:8px; top:8px; background:rgba(20,35,29,.8); color:var(--chalk); font-size:14px; padding:4px 9px; border-radius:12px; pointer-events:none; }
+  /* 27-Nov v15 答案一面对一面 (JR 12:0x 选 B): the answer picture of the face on screen, right under it, full width */
+  .ansRow { display:flex; gap:8px; margin:2px 0 6px; }
+  .ansRow button { flex:1; font-size:17px; padding:11px 8px; background:transparent; color:var(--chalk); border:1.5px solid var(--go); }
+  .ansRow button.on { background:var(--go); color:var(--go-fg); }
+  .ansBox { margin:0 -14px 10px; border-radius:0; overflow:hidden; background:#fff; min-height:60px; }
+  .ansBox img { display:block; width:100%; height:auto; }
+  .ansBox .wait { color:#555; font-size:16px; padding:16px; }
+  .ansNote { color:var(--dust); font-size:15px; margin:0 0 8px; }
   .willSave { margin:10px 0 0; padding:9px 12px; border-radius:10px; background:var(--slate2); color:var(--chalk); font-size:17px; }
   .willSave b { color:var(--go); }
   .reasons { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:8px; }
@@ -327,7 +335,7 @@
   // Big C fills in JR's Apps Script web-app address (https://script.google.com/macros/s/.../exec) before the page is published on GitHub Pages.
   // Inside Apps Script itself this stays unused (google.script.run is used instead).
   var EXEC_URL = 'https://script.google.com/macros/s/AKfycbyxbS6gZNiC37tzVZgdoM4eJLfdWZAKOU5rGPMp-D9XRwd8DTkhQL4Braa3lYnddZ3e1A/exec';   // filled in only in the published copy (apps/scanner/publish_jr_scan.py); the address never goes into this repo
-  var VERSION = '第十四版 g · 25-Nov-2026';
+  var VERSION = '第十五版 · 27-Nov-2026 · 有答案';
   var onGoogle = typeof google !== 'undefined' && google.script && google.script.run;
   var hasServer = !!(onGoogle || EXEC_URL);     // false = nothing to save to: the PDF is only downloaded
   var $ = function (id) { return document.getElementById(id); };
@@ -736,6 +744,30 @@
     faceHD[k] = null;
     run('faceHd', [pinValue, p.paper_id, n]).then(function (u) { faceHD[k] = u || ''; if (then && u) then(u); }).catch(function () { faceHD[k] = ''; });
   }
+  // 27-Nov v15 (JR 12:0x「我要你把答案，放在我们的 app 里面……用答案来改卷」, chose B 一面对一面): apps/scanner/face_answers.py writes one
+  // answer picture per face to 09_扫描/_缩图/<paper_id>-答案/<n>-hd.jpg (199 = 整份, the lines not tied to a face). The SAME Code.gs faceHd
+  // reads it (paper id + '-答案'), so nothing new to paste. p.ans = {n, whole} from _今天的卷.json, or {missing: why}.
+  var ansOn = false, recAns = {}, ansWhole = {};
+  function ansOf(pid, n, then) { hdOf({ paper_id: pid + '-答案' }, n, then); }
+  function ansImg(pid, n) {
+    var box = el('div', 'ansBox'), k = pid + '-答案|' + n, u = faceHD[k];
+    if (u) { var im = el('img'); im.alt = '第 ' + n + ' 面的答案'; im.src = u; box.appendChild(im); return box; }
+    if (u === '') { box.appendChild(el('div', 'wait', n === 199 ? '没有整份的答案。' : '第 ' + n + ' 面的答案图还没做好。')); return box; }
+    box.appendChild(el('div', 'wait', '答案读取中……'));
+    ansOf(pid, n, function () { if (view === 'class') drawClass(); });
+    return box;
+  }
+  function ansPart(p, n) {                 // under the face picture: one button, and the answers of THAT face when it is on
+    var a = p.ans || {}, wrap = el('div');
+    if (!a.n) { if (a.missing) wrap.appendChild(el('p', 'ansNote', '答案：' + a.missing)); return wrap; }
+    var row = el('div', 'ansRow');
+    row.appendChild(btn(ansOn ? '📖 收起答案' : '📖 看第 ' + n + ' 面的答案', ansOn ? 'on' : '', function () { ansOn = !ansOn; drawClass(); }));
+    if (a.whole) row.appendChild(btn(ansWhole[p.paper_id] ? '收起整份' : '整份 / 评分', ansWhole[p.paper_id] ? 'on' : '', function () { ansWhole[p.paper_id] = !ansWhole[p.paper_id]; drawClass(); }));
+    wrap.appendChild(row);
+    if (ansOn) { wrap.appendChild(ansImg(p.paper_id, n)); [n - 1, n + 1].forEach(function (k) { if (k >= 1 && k <= a.n) ansOf(p.paper_id, k); }); }
+    if (a.whole && ansWhole[p.paper_id]) wrap.appendChild(ansImg(p.paper_id, 199));
+    return wrap;
+  }
   // 20-Nov v14c (JR「我按过了，可是为什么还是没有出现」): a paper opens on the NEXT face after the last press, and that face used to say 「（还没按）」
   // although the class HAD pressed. Now: the face itself says whether it was done, and 「还没按」 only when this class never pressed the paper.
   function stageNote(p, n) {
@@ -766,7 +798,7 @@
   }
   function paperBody(p, mine) {
     var body = el('div', 'pBody'), faces = p.faces || [], maxF = faces.length ? faces[faces.length - 1].n : 0;
-    if (faces.length) body.appendChild(stageOf(p, faces));
+    if (faces.length) { body.appendChild(stageOf(p, faces)); body.appendChild(ansPart(p, pe.face || pe.view || 1)); }
     var q = el('div', 'q', '做完到第几面？'); q.appendChild(el('small', '', '  按最后做完的那一面' + (mine ? '；划掉的 = 上次做完的' : ''))); body.appendChild(q);
     var grid = el('div', 'faces');
     faces.forEach(function (fc) {
@@ -882,7 +914,12 @@
     head.appendChild(el('span', 'st', p.rec_st ? '已记：' + p.rec_st : ph.length ? '' : '还没按'));
     if (ph.length) head.appendChild(el('span', 'ph', '📷 ' + dayShort(ph[0]) + ' 照片收到了 → 电脑当「做完」' + (p.rec_st ? '' : '（不对才按下面）')));
     card.appendChild(head);
-    var body = el('div', 'pBody'), bs = el('div', 'recBtns');
+    var body = el('div', 'pBody'), bs = el('div', 'recBtns'), ra = p.ans || {};
+    if (ra.n) {                                   // 27-Nov v15: the 回头考's answers, all its faces under each other
+      var ar = el('div', 'ansRow'); ar.appendChild(btn(recAns[p.paper_id] ? '📖 收起答案' : '📖 看答案（' + ra.n + ' 面）', recAns[p.paper_id] ? 'on' : '', function () { recAns[p.paper_id] = !recAns[p.paper_id]; drawClass(); }));
+      body.appendChild(ar);
+      if (recAns[p.paper_id]) { for (var an = 1; an <= ra.n; an++) body.appendChild(ansImg(p.paper_id, an)); if (ra.whole) body.appendChild(ansImg(p.paper_id, 199)); }
+    } else if (ra.missing) body.appendChild(el('p', 'ansNote', '答案：' + ra.missing));
     ['做完', '没做'].forEach(function (st) {        // 19-Nov v14: two buttons (一半 is still accepted by Code.gs for older pages)
       bs.appendChild(btn(st, sel === st ? 'on' : '', function () { recSel[p.paper_id] = st; drawClass(); })); });
     body.appendChild(bs);
